@@ -24,7 +24,7 @@ import os
 
 from . import llm
 
-AGENT_ROLES = ("intent", "coder")
+AGENT_ROLES = llm.AGENT_ROLES
 
 
 def key_variable(role: str) -> str:
@@ -38,17 +38,17 @@ def command(role: str, *, json_events: bool = False,
     With `resume` (a session id from the stream's `thread.started`), the argv
     continues THAT session -- `codex exec resume ID` -- with its memory of what
     it did: the next round of an orchestrated run (orchestrate.py). Raises
-    RuntimeError when the role has no model or no key -- said, not guessed: an
-    agent role has no sensible default model."""
+    RuntimeError naming every setting the role still lacks -- said, not guessed:
+    no role has a default."""
     if role not in AGENT_ROLES:
         raise ValueError(f"not an agent role: {role!r} (one of {AGENT_ROLES})")
+    lacking = llm.missing(role)
+    if lacking:
+        raise RuntimeError(f"the {role} is not configured: fix {', '.join(lacking)} in "
+                           "cockpit/.env")
     ep = llm.endpoint(role)
-    if not ep["model"]:
-        raise RuntimeError(f"no model for the {role}: set SGE_{role.upper()}_MODEL "
-                           "in cockpit/.env")
-    if not ep["api_key"]:
-        raise RuntimeError(f"no API key for the {role}: set SGE_{role.upper()}_API_KEY "
-                           f"or SGE_{role.upper()}_KEYCHAIN in cockpit/.env")
+    if ep["harness"] != "codex-cli":   # llm.HARNESSES names only what has an adapter
+        raise RuntimeError(f"no adapter for the harness {ep['harness']!r} here")
     provider, var = f"sge_{role}", key_variable(role)
     # resume takes the same options, but after its own name
     argv = [

@@ -21,7 +21,7 @@ def _ready(tmp_path, monkeypatch):
     """A project a run could start on: a root, the goal, both manuals, endpoints."""
     for name in ("SPEC.md", "TASK.md", "ORCHESTRATOR.md", "AGENTS.md"):
         (tmp_path / name).write_text(f"# {name}\n", encoding="utf-8")
-    monkeypatch.setattr(llm, "endpoint", lambda role: {"api_key": "k", "model": "m"})
+    monkeypatch.setattr(llm, "missing", lambda role: [])
     monkeypatch.setattr(orchestrate.shutil, "which", lambda name: f"/usr/bin/{name}")
     return tmp_path
 
@@ -44,9 +44,11 @@ def test_each_missing_piece_is_named(tmp_path, monkeypatch, missing, says):
 
 def test_a_role_without_an_endpoint_blocks_the_run(tmp_path, monkeypatch):
     root = _ready(tmp_path, monkeypatch)
-    monkeypatch.setattr(llm, "endpoint",
-                        lambda role: {"api_key": "k", "model": "" if role == "coder" else "m"})
-    assert [line for line in orchestrate.blockers(root) if "the coder" in line]
+    monkeypatch.setattr(llm, "missing",
+                        lambda role: ["SGE_CODER_BASE_URL is not a URL"] if role == "coder"
+                        else [])
+    [line] = [line for line in orchestrate.blockers(root) if "the coder" in line]
+    assert "SGE_CODER_BASE_URL is not a URL" in line
 
 
 def test_a_goal_elsewhere_is_accepted(tmp_path, monkeypatch):
@@ -100,3 +102,13 @@ def test_an_event_of_another_format_is_not_this_ones():
     dropping it as an event worth no line (orchestrate.Record)."""
     assert runlog.lines({"type": "assistant", "message": {}}) is None
     assert runlog.lines({"type": "item.completed", "item": {"type": "reasoning"}}) == []
+
+
+def test_a_missing_codex_cli_is_named_with_where_to_get_it(tmp_path, monkeypatch):
+    """I and C run on the Codex CLI: without `codex` on PATH, nothing an agent
+    does can start -- said before the run, with the way to fix it."""
+    root = _ready(tmp_path, monkeypatch)
+    monkeypatch.setattr(llm, "endpoint", lambda role: {"harness": "codex-cli"})
+    monkeypatch.setattr(orchestrate.shutil, "which", lambda name: None)
+    [line] = [line for line in orchestrate.blockers(root) if "PATH" in line]
+    assert "`codex` is not on PATH" in line and "github.com/openai/codex" in line

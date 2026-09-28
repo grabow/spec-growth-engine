@@ -28,7 +28,7 @@ engine/    deterministic tool core (authors NO intent)
 agent/     AI roles (separate from the engine), one model setting per role
   llm.py       shared LLM plumbing + one endpoint per role (URL, key, model)
   codex_cli.py I and C as `codex exec` agents on their own endpoints
-  semantic.py  optional GLM-5.2 re-ranker + duplicate judge (injected into capability)
+  semantic.py  optional re-ranker + duplicate judge on the planner's model (injected)
   reviewer.py  role H': advisory review of a Draft at the SOFT gate (D1), the
                brief of a HARD change, and a run's goal check (the model: SGE_REVIEWER_*)
   planner.py   role P: intent -> SPEC.md draft (Draft) AND spec + change -> revised
@@ -43,7 +43,11 @@ example/   a tiny demo spec graph (checkout / payment / data)
 
 ## Run
 
-Python 3.12 (pinned via `.python-version`).
+Python 3.12 (pinned via `.python-version`) and [uv](https://docs.astral.sh/uv/).
+For the coder C and for agent runs also the **Codex CLI**
+([github.com/openai/codex](https://github.com/openai/codex), the `codex`
+command: `npm install -g @openai/codex`) -- see
+[Models, endpoints and keys](#models-endpoints-and-keys-cockpitenv).
 
 ```sh
 cd cockpit            # from the repository root
@@ -373,33 +377,82 @@ editor changed the file meanwhile, it refuses rather than deciding the wrong one
 After *Validate*, the guidance says how many requests await you instead of just
 "validated", and nodes waiting on H are outlined amber in the graph.
 
-## AI configuration (no hardcoded keys)
+## Models, endpoints and keys (`cockpit/.env`)
 
-The planner uses OpenRouter (OpenAI-compatible API). Config lives in `.env`
-(git-ignored), e.g.:
+Four roles call a model, and each has its OWN endpoint, so which model at which
+provider plays which role is your choice:
 
-```sh
-OPENROUTER_API_KEY=sk-or-v1-...
-SGE_PLANNER_MODEL=z-ai/glm-5.2
-SGE_CODER_CMD=codex exec        # or: claude -p
+```text
+role        what it does                         called as          needed for
+----------  -----------------------------------  -----------------  -------------------------
+planner  P  intent -> SPEC.md (Draft, Revise)    a chat call        drafting with a model;
+                                                                    semantic matching
+reviewer H' reviews drafts, briefs HARD changes, a chat call        D1/D2, briefs, delegation,
+            checks a run's goal                                     runs
+intent   I  the agent that authors a run         an agent, on the   runs
+                                                 Codex CLI
+coder    C  implements a node from its SPEC.md   an agent, on the   the Codex button,
+                                                 Codex CLI          `cli.py code`, runs
 ```
 
-The cockpit launches and loads nodes without a key; "Draft ⟶" reports the
-missing key instead of crashing.
+Nothing else needs a model: the gate, drift, test evidence, the change set and
+specs written by hand work with no key at all.
+
+**Where.** Copy `cockpit/.env.example` to `cockpit/.env` and fill in the roles
+you use -- or, to run every role on DeepSeek, copy `cockpit/.env.deepseek.example`,
+which is complete except for the keys: put yours in place of each `sk-...`. The file is git-ignored; the example is tracked and holds no values.
+The cockpit, `cli.py` and every run read it from there, and only there -- no
+model is set anywhere else. A variable already set in the environment wins, so
+one command can override a role: `SGE_CODER_MODEL=... uv run python cli.py run ROOT`.
+
+**How.** Every role is set the same way, by three lines -- an OpenAI-compatible
+endpoint (any provider that speaks that API, or a local server), its key, and
+the model as that provider names it. The two agents take a fourth: the
+HARNESS, the agent CLI that runs them.
+
+```sh
+SGE_PLANNER_BASE_URL=https://...
+SGE_PLANNER_API_KEY=...
+SGE_PLANNER_MODEL=<model id>       # the same three lines for REVIEWER
+
+SGE_CODER_BASE_URL=https://...
+SGE_CODER_API_KEY=...
+SGE_CODER_MODEL=<model id>
+SGE_CODER_HARNESS=codex-cli        # the same four lines for INTENT
+```
+
+**Nothing falls back.** A role without its three lines is not configured -- not
+borrowed from another role, not defaulted to a provider -- and whatever asks for
+it says which settings are missing. Two roles on the same model repeat the same
+values. For the reviewer that works, but then H' reviews what its own model
+wrote, and every review says so: another model makes the review independent.
+
+**The two agents, on the Codex CLI.** The one harness there is, `codex-cli`, is
+the Codex CLI ([github.com/openai/codex](https://github.com/openai/codex)) --
+REQUIRED for I and C: install it with `npm install -g @openai/codex`, so that the
+`codex` command is on PATH. Both run as `codex exec`, pointed at their endpoint
+on the command line; `~/.codex/config.toml` is neither needed nor touched, and
+the key reaches codex only through its environment, never the command (which is
+logged). The cockpit's **Codex** button, `cli.py code` and every run start C the
+same way; without `codex` on PATH, Start a run... and `cli.py run` say so before
+anything starts. The cockpit, the gate, drafting and reviews need no Codex CLI.
+
+**Check it.** `uv run python role_agent.py --describe` prints, per role, how it
+runs, the model and the endpoint, and which variable its key came from -- never
+the key. A run records the same lines in `ROOT/.sge/runs/NN.roles`. Start a
+run... and `cli.py run` refuse to start while a role a run needs is not
+configured, and say which. The cockpit itself starts and loads nodes without
+any key; Draft ⟶ reports a missing setting instead of failing.
 
 ### Persistent settings (`cockpit.json`, git-ignored)
 
-Non-secret settings persist in `cockpit.json` (seeded from the env on
-first run): `planner_model` (role P), `reviewer_model` (role H'; empty = the
-planner's, and then every review says it is not independent), `coder_cmd`
-(role C), `last_root`, `semantic_match` (GLM-5.2
-capability matching), and `draft_gate` (0..2; the Autonomy slider for the
+Non-secret settings persist in `cockpit.json`: `last_root`, `semantic_match`
+(capability matching with the planner's model), and `draft_gate` (0..2; the Autonomy slider for the
 DRAFT gate; 1 = advisory H' draft review, 2 = H' auto-clears the SOFT draft gate;
 no-op without an API key). The delegation is not a slider setting: it concerns
 pending HARD changes and is switched per project with `cli.py delegate`. On launch the cockpit reopens the
 **last working directory** (override with an explicit path argument).
-The API key stays in `.env`, never in `cockpit.json`. Edit `cockpit.json` to
-change the model or how the coder is invoked.
+Keys and models stay in `.env`, never in `cockpit.json`.
 
 ## Choosing where the spec graph lives
 
@@ -519,7 +572,7 @@ removed, dependents = nodes.delete_node("api.discount", n)       # recursive=Tru
    the **owning container's** code-layout invariants (carried down the Spine; code tree
    separate from the spec tree) and never leaves `code: []` for a code-owning component
    -- so the build layout is an explicit spec decision, not improvised by the coder.
-   At **draft gate D1 or D2** (the **Autonomy slider**, default D1; GLM-5.2) an
+   At **draft gate D1 or D2** (the **Autonomy slider**, default D1) an
    **advisory H' review** (role: the architect's deputy) runs right after and shows
    findings in Guidance -- altitude (contract = WHAT not HOW), intent placement,
    testable acceptance, depends_on/`code` sanity, reuse, and intent fidelity.
@@ -637,7 +690,7 @@ same capability is not built twice in unrelated branches. `Registry` menu:
   in `CAPABILITIES.claims.json` at the project root.
 
 Similarity is lexical (token Jaccard) by default. When `semantic_match` is on
-(cockpit.json, default true) and an OpenRouter key is present, GLM-5.2 adds a
+(cockpit.json, default true) and the planner is configured, its model adds a
 semantic layer via dependency injection (agent/semantic.py): the lexical hits
 are the cheap prefilter, then the model re-ranks Find results (blended 50/50
 with lexical) and confirms Duplicate pairs ("same capability?" -> demotes

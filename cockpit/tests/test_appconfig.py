@@ -4,8 +4,6 @@ import sys
 
 
 def _fresh_appconfig(tmp_path, monkeypatch):
-    monkeypatch.delenv("SGE_PLANNER_MODEL", raising=False)
-    monkeypatch.delenv("SGE_CODER_CMD", raising=False)
     monkeypatch.delenv("SGE_SEMANTIC_MATCH", raising=False)
     monkeypatch.delenv("SGE_DRAFT_GATE", raising=False)
     import appconfig
@@ -17,17 +15,25 @@ def _fresh_appconfig(tmp_path, monkeypatch):
 def test_defaults_when_no_file(tmp_path, monkeypatch):
     ac = _fresh_appconfig(tmp_path, monkeypatch)
     cfg = ac.load()
-    assert cfg["planner_model"] == "z-ai/glm-5.2"
-    assert cfg["coder_cmd"] == "codex exec"
     assert cfg["last_root"] == ""
+    assert cfg["draft_gate"] == 1
+
+
+def test_which_model_plays_a_role_is_not_a_cockpit_setting(tmp_path, monkeypatch):
+    """cockpit/.env is the one place (agent/llm.py): a model stored here too
+    would silently overrule it -- an old cockpit.json's entry is ignored."""
+    ac = _fresh_appconfig(tmp_path, monkeypatch)
+    assert not [k for k in ac._DEFAULTS if "model" in k or "cmd" in k]
+    (tmp_path / "cockpit.json").write_text('{"planner_model": "old", "last_root": "/p"}',
+                                           encoding="utf-8")
+    cfg = ac.load()
+    assert "planner_model" not in cfg and cfg["last_root"] == "/p"
 
 
 def test_save_and_load_roundtrip(tmp_path, monkeypatch):
     ac = _fresh_appconfig(tmp_path, monkeypatch)
-    ac.save({"planner_model": "m", "coder_cmd": "c x", "last_root": "/p/proj"})
+    ac.save({"last_root": "/p/proj"})
     cfg = ac.load()
-    assert cfg["planner_model"] == "m"
-    assert cfg["coder_cmd"] == "c x"
     assert cfg["last_root"] == "/p/proj"
     assert cfg["semantic_match"] is True  # default carried through save
     assert cfg["draft_gate"] == 1         # default: D1
@@ -37,7 +43,7 @@ def test_load_tolerates_garbage(tmp_path, monkeypatch):
     ac = _fresh_appconfig(tmp_path, monkeypatch)
     (tmp_path / "cockpit.json").write_text("{ not json", encoding="utf-8")
     cfg = ac.load()  # must not raise, returns defaults
-    assert cfg["planner_model"] == "z-ai/glm-5.2"
+    assert cfg["last_root"] == ""
 
 
 # ---- graph view state (per spec root) ---------------------------------------

@@ -53,14 +53,13 @@ acceptance by H' can be confirmed (`accept`) or overruled (`reject`) by H.
 `draft`, `revise` and `code` are how the INTENT AUTHOR (role I -- you in the
 cockpit, an agent in an orchestrated run) reaches the planner P and the coder C
 without writing a spec or a line of code itself. Each role has its own model
-(agent/llm.py): P is SGE_PLANNER_MODEL, C is the agent CLI in SGE_CODER_CMD, H'
-is SGE_REVIEWER_MODEL. Every call is logged with the model that made it.
+(agent/llm.py): P is SGE_PLANNER_*, C is a codex agent on SGE_CODER_*, H' is
+SGE_REVIEWER_*. Every call is logged with the model that made it.
 """
 from __future__ import annotations
 
 import argparse
 import getpass
-import os
 import stat
 import sys
 from pathlib import Path
@@ -410,8 +409,9 @@ def cmd_intents(root: str, nid: str | None) -> int:
 
 def cmd_code(root: str, nid: str, instruction: str | None) -> int:
     """C implements one node from its context bundle (engine/context.py), in the
-    node's build root, with the agent CLI in SGE_CODER_CMD. Streams C's output
-    and keeps it in <root>/.sge/code/. C may take minutes."""
+    node's build root, as a codex agent on the coder's own endpoint
+    (SGE_CODER_BASE_URL / _API_KEY / _MODEL). Streams C's output and keeps it in
+    <root>/.sge/code/. C may take minutes."""
     import time
     from agent import coder
     from engine import context, lifecycle
@@ -420,20 +420,13 @@ def cmd_code(root: str, nid: str, instruction: str | None) -> int:
         print(f"error: no node {nid!r}", file=sys.stderr)
         return 2
     _load_env()
-    # C as a codex agent with its own endpoint when one is configured
-    # (SGE_CODER_MODEL, agent/codex_cli.py); else the command the cockpit uses
-    env = None
-    if os.environ.get("SGE_CODER_MODEL"):
-        from agent import codex_cli
-        try:
-            command, env = codex_cli.command("coder")
-        except RuntimeError as exc:
-            print(f"C unavailable: {exc}", file=sys.stderr)
-            return 2
-        by = codex_cli.describe("coder")
-    else:
-        command = os.environ.get("SGE_CODER_CMD") or "codex exec"
-        by = command
+    from agent import codex_cli
+    try:
+        command, env = codex_cli.command("coder")
+    except RuntimeError as exc:
+        print(f"C unavailable: {exc}", file=sys.stderr)
+        return 2
+    by = codex_cli.describe("coder")
     bundle = context.assemble(nodes, parser.load_architecture(root), nid, root)
     if instruction:
         bundle += f"\n\n# INSTRUCTION FROM THE INTENT AUTHOR\n{instruction}"

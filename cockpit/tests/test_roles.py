@@ -3,6 +3,8 @@ author I reaches the planner P and the coder C (cli.py draft / revise / code).
 P, H' and C are stubs here -- the suite never reaches a model or an agent CLI.
 graph_root: app > api > api.hello (depends_on util), util."""
 import json
+import re
+from pathlib import Path
 
 import pytest
 
@@ -26,10 +28,15 @@ def test_each_role_reads_its_own_setting(monkeypatch):
     assert (llm.planner_model(), llm.reviewer_model()) == ("p-model", "h-model")
 
 
-def test_the_reviewer_defaults_to_the_planners_model(monkeypatch):
-    monkeypatch.setenv("SGE_PLANNER_MODEL", "p-model")
-    monkeypatch.delenv("SGE_REVIEWER_MODEL", raising=False)
-    assert llm.reviewer_model() == "p-model"
+def test_the_reviewer_does_not_fall_back_to_the_planner(monkeypatch):
+    """Every role is set by its own three lines, and only by them: the same
+    model for two roles is written twice, which is what makes it visible."""
+    for field in llm.FIELDS:
+        monkeypatch.setenv(f"SGE_PLANNER_{field}", "p")
+        monkeypatch.delenv(f"SGE_REVIEWER_{field}", raising=False)
+    assert llm.reviewer_model() == ""
+    assert llm.missing("reviewer") == ["SGE_REVIEWER_BASE_URL", "SGE_REVIEWER_API_KEY",
+                                       "SGE_REVIEWER_MODEL"]
 
 
 def test_settings_are_read_when_called_not_when_imported(monkeypatch):
@@ -61,26 +68,24 @@ def test_h_prime_asks_the_reviewer_model_not_the_planners(monkeypatch):
     assert models == ["h-model", "h-model"]
 
 
-def test_the_cockpit_persists_a_reviewer_model(monkeypatch):
-    monkeypatch.delenv("SGE_REVIEWER_MODEL", raising=False)
+def test_the_cockpit_keeps_no_model_of_its_own():
     import importlib
     cfg = importlib.reload(appconfig)._DEFAULTS
-    assert cfg["reviewer_model"] == ""   # empty: the planner's model
+    assert "reviewer_model" not in cfg and "planner_model" not in cfg
 
 
 class _Cfg:
     _reviewer_model = app.Cockpit._reviewer_model
     _independence_note = app.Cockpit._independence_note
 
-    def __init__(self, **cfg):
-        self.config_data = {"planner_model": "p-model", **cfg}
 
-
-def test_the_cockpit_says_when_the_review_is_not_independent():
+def test_the_cockpit_says_when_the_review_is_not_independent(monkeypatch):
+    monkeypatch.setenv("SGE_PLANNER_MODEL", "p-model")
+    monkeypatch.setenv("SGE_REVIEWER_MODEL", "p-model")
     assert "not an independent review" in _Cfg()._independence_note()
-    assert "not an independent review" in _Cfg(reviewer_model="p-model")._independence_note()
-    assert _Cfg(reviewer_model="h-model")._independence_note() == ""
-    assert _Cfg(reviewer_model="h-model")._reviewer_model() == "h-model"
+    monkeypatch.setenv("SGE_REVIEWER_MODEL", "h-model")
+    assert _Cfg()._independence_note() == ""
+    assert _Cfg()._reviewer_model() == "h-model"
 
 
 # ---- P through the CLI: draft and revise ----------------------------------------
@@ -166,15 +171,20 @@ class _Proc:
 def _no_real_env(monkeypatch):
     """cli.py loads cockpit/.env; the tests must not pick up its real roles."""
     monkeypatch.setattr(cli, "_load_env", lambda: None)
-    for role in ("PLANNER", "REVIEWER", "INTENT", "CODER"):
-        for field in ("BASE_URL", "API_KEY", "MODEL", "KEYCHAIN"):
-            monkeypatch.delenv(f"SGE_{role}_{field}", raising=False)
-    monkeypatch.delenv("SGE_CODER_CMD", raising=False)
+    for role in llm.ROLES:
+        for field in llm.fields(role):
+            monkeypatch.delenv(llm.variable(role, field), raising=False)
 
 
-def test_code_runs_c_with_the_coder_command_and_keeps_its_output(graph_root, monkeypatch,
-                                                                  capsys):
-    monkeypatch.setenv("SGE_CODER_CMD", "my-coder --flag")
+def _coder_endpoint(monkeypatch, key="c-key"):
+    monkeypatch.setenv("SGE_CODER_BASE_URL", "https://api.example/v1")
+    monkeypatch.setenv("SGE_CODER_API_KEY", key)
+    monkeypatch.setenv("SGE_CODER_MODEL", "c-model")
+    monkeypatch.setenv("SGE_CODER_HARNESS", "codex-cli")
+
+
+def test_code_runs_c_on_its_endpoint_and_keeps_its_output(graph_root, monkeypatch, capsys):
+    _coder_endpoint(monkeypatch)
     started = []
     monkeypatch.setattr(coder, "implement",
                         lambda bundle, nid, node, root, command, env=None: started.append(
@@ -182,33 +192,48 @@ def test_code_runs_c_with_the_coder_command_and_keeps_its_output(graph_root, mon
     assert cli.main(["code", str(graph_root), "api.hello",
                      "--instruction", "keep it small"]) == 0
     nid, command, bundle = started[0]
-    assert (nid, command) == ("api.hello", "my-coder --flag")
+    assert nid == "api.hello" and command[:2] == ["codex", "exec"]
     assert "keep it small" in bundle and "api.hello" in bundle
     assert "wrote greet.py" in capsys.readouterr().out
     [log] = list((graph_root / ".sge" / "code").glob("api.hello-*.log"))
     assert "wrote greet.py" in log.read_text(encoding="utf-8")
     entry = _log(graph_root)[-1]
-    assert (entry["actor"], entry["by"], entry["action"], entry["exit"]) == \
-        ("C", "my-coder --flag", "coded", 0)
+    assert (entry["actor"], entry["action"], entry["exit"]) == ("C", "coded", 0)
+    assert entry["by"] == "codex exec: c-model @ https://api.example/v1"
 
 
 def test_code_passes_cs_exit_code_on(graph_root, monkeypatch):
+    _coder_endpoint(monkeypatch)
     monkeypatch.setattr(coder, "implement", lambda *a, **k: _Proc([], code=3))
     assert cli.main(["code", str(graph_root), "util"]) == 3
 
 
+def test_code_without_a_coder_endpoint_says_what_is_missing(graph_root, monkeypatch,
+                                                            capsys):
+    monkeypatch.setattr(coder, "implement", lambda *a, **k: pytest.fail("must not start"))
+    monkeypatch.setenv("SGE_CODER_MODEL", "c-model")
+    monkeypatch.setenv("SGE_CODER_HARNESS", "codex-cli")
+    assert cli.main(["code", str(graph_root), "util"]) == 2
+    err = capsys.readouterr().err
+    assert "SGE_CODER_BASE_URL, SGE_CODER_API_KEY" in err and "SGE_CODER_MODEL" not in err
+
+
 # ---- one endpoint per role: URL, key, model -------------------------------------
 
-def test_the_planner_falls_back_to_openrouter(monkeypatch):
+def test_nothing_falls_back_and_no_provider_is_built_in(monkeypatch):
+    """No default URL, key or model, and no provider-specific variable: an unset
+    role is unset, and says which of its settings are missing."""
     monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
-    ep = llm.endpoint("planner")
-    assert (ep["base_url"], ep["api_key"], ep["model"]) == \
-        (llm.OPENROUTER_BASE, "or-key", llm.DEFAULT_MODEL)
-    assert ep["key_from"] == "OPENROUTER_API_KEY"
+    for role in llm.ROLES:
+        ep = llm.endpoint(role)
+        assert (ep["base_url"], ep["api_key"], ep["model"], ep["key_from"]) == ("", "", "", "")
+        assert llm.missing(role) == [llm.variable(role, f) for f in llm.fields(role)]
+    with pytest.raises(RuntimeError, match="the planner is not configured: fix "
+                                           "SGE_PLANNER_BASE_URL, SGE_PLANNER_API_KEY"):
+        llm._client("planner")
 
 
-def test_each_role_can_have_its_own_url_key_and_model(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+def test_each_role_has_its_own_url_key_and_model(monkeypatch):
     monkeypatch.setenv("SGE_CODER_BASE_URL", "https://api.deepseek.com")
     monkeypatch.setenv("SGE_CODER_API_KEY", "ds-key")
     monkeypatch.setenv("SGE_CODER_MODEL", "deepseek-chat")
@@ -216,34 +241,61 @@ def test_each_role_can_have_its_own_url_key_and_model(monkeypatch):
     coder_ep, intent_ep = llm.endpoint("coder"), llm.endpoint("intent")
     assert (coder_ep["base_url"], coder_ep["api_key"], coder_ep["model"]) == \
         ("https://api.deepseek.com", "ds-key", "deepseek-chat")
-    # intent sets only a model: URL and key are the planner's
+    assert coder_ep["key_from"] == "SGE_CODER_API_KEY"
+    # intent sets only a model: its URL and key are NOT borrowed from anyone
     assert (intent_ep["base_url"], intent_ep["api_key"], intent_ep["model"]) == \
-        (llm.OPENROUTER_BASE, "or-key", "gpt-5.5")
+        ("", "", "gpt-5.5")
+    assert llm.missing("intent") == ["SGE_INTENT_BASE_URL", "SGE_INTENT_API_KEY",
+                                     "SGE_INTENT_HARNESS"]
 
 
 def test_an_agent_role_gets_no_default_model(monkeypatch):
-    """A coder silently running on the planner's model is the confusion this removes."""
-    monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+    """A coder silently running on another role's model is the confusion this removes."""
+    monkeypatch.setenv("SGE_CODER_BASE_URL", "https://api.example/v1")
+    monkeypatch.setenv("SGE_CODER_API_KEY", "k")
     assert llm.endpoint("coder")["model"] == ""
     from agent import codex_cli
-    with pytest.raises(RuntimeError, match="no model for the coder"):
+    with pytest.raises(RuntimeError, match="the coder is not configured: fix SGE_CODER_MODEL"):
         codex_cli.command("coder")
 
 
-def test_a_key_can_come_from_the_keychain(monkeypatch):
-    import subprocess
-    calls = []
+def test_a_model_id_in_the_url_line_is_caught_before_the_first_call(monkeypatch, capsys):
+    """It happened: the model's name in SGE_REVIEWER_BASE_URL. Every setting was
+    'set', and the first review would have failed at the provider."""
+    monkeypatch.setenv("SGE_REVIEWER_BASE_URL", "deepseek-flash")
+    monkeypatch.setenv("SGE_REVIEWER_API_KEY", "k")
+    monkeypatch.setenv("SGE_REVIEWER_MODEL", "deepseek-flash")
+    assert llm.missing("reviewer") == ["SGE_REVIEWER_BASE_URL is not a URL"]
+    monkeypatch.setenv("SGE_REVIEWER_BASE_URL", "https://api.deepseek.com")
+    assert llm.missing("reviewer") == []
+    import role_agent
+    monkeypatch.setattr(role_agent, "_load_env", lambda: None)
+    monkeypatch.setenv("SGE_REVIEWER_BASE_URL", "deepseek-flash")
+    assert role_agent.main(["--describe"]) == 0
+    out = capsys.readouterr().out
+    assert "NOT CONFIGURED: fix SGE_REVIEWER_BASE_URL is not a URL" in out
 
-    def security(argv, **_k):
-        calls.append(argv)
-        return subprocess.CompletedProcess(argv, 0, stdout="kc-key\n", stderr="")
-    monkeypatch.setattr(llm.subprocess, "run", security)
+
+def test_an_agent_role_names_its_harness(monkeypatch):
+    """The fourth setting of I and C: which agent CLI plays the role. Required,
+    like the other three, and only a harness there is an adapter for."""
+    assert llm.fields("planner") == ("BASE_URL", "API_KEY", "MODEL")
+    assert llm.fields("coder") == ("BASE_URL", "API_KEY", "MODEL", "HARNESS")
+    for field, value in (("BASE_URL", "https://api.example/v1"), ("API_KEY", "k"),
+                         ("MODEL", "m")):
+        monkeypatch.setenv(f"SGE_CODER_{field}", value)
+    assert llm.missing("coder") == ["SGE_CODER_HARNESS"]
+    monkeypatch.setenv("SGE_CODER_HARNESS", "claude")
+    assert llm.missing("coder") == ["SGE_CODER_HARNESS is not a known harness (codex-cli)"]
+    monkeypatch.setenv("SGE_CODER_HARNESS", "codex-cli")
+    assert llm.missing("coder") == [] and llm.endpoint("coder")["harness"] == "codex-cli"
+
+
+def test_a_keychain_setting_is_not_read(monkeypatch):
+    """One way to give a key: SGE_<ROLE>_API_KEY."""
     monkeypatch.setenv("SGE_CODER_KEYCHAIN", "deepseek-api-key")
-    assert llm.endpoint("coder")["api_key"] == "kc-key"
-    assert llm.endpoint("coder")["key_from"] == "keychain: deepseek-api-key"
-    monkeypatch.setenv("SGE_CODER_API_KEY", "file-key")          # the file wins
-    assert llm.endpoint("coder")["key_from"] == "SGE_CODER_API_KEY"
-    assert calls[0][:2] == ["security", "find-generic-password"] and "deepseek-api-key" in calls[0]
+    assert llm.endpoint("coder")["api_key"] == ""
+    assert not hasattr(llm, "subprocess"), "llm asks no keychain"
 
 
 def test_describe_never_contains_the_key(monkeypatch):
@@ -260,6 +312,7 @@ def test_the_codex_command_names_the_key_variable_never_the_key(monkeypatch):
     monkeypatch.setenv("SGE_CODER_BASE_URL", "https://api.example/v1")
     monkeypatch.setenv("SGE_CODER_API_KEY", "sk-SECRET-123")
     monkeypatch.setenv("SGE_CODER_MODEL", "some-model")
+    monkeypatch.setenv("SGE_CODER_HARNESS", "codex-cli")
     argv, env = codex_cli.command("coder", json_events=True)
     assert "sk-SECRET-123" not in " ".join(argv)
     assert env[codex_cli.key_variable("coder")] == "sk-SECRET-123"
@@ -282,7 +335,9 @@ def test_c_never_gets_an_open_stdin(monkeypatch):
 
 
 def test_code_runs_c_as_codex_when_the_coder_has_an_endpoint(graph_root, monkeypatch, capsys):
+    monkeypatch.setenv("SGE_CODER_BASE_URL", "https://api.deepseek.com")
     monkeypatch.setenv("SGE_CODER_MODEL", "deepseek-chat")
+    monkeypatch.setenv("SGE_CODER_HARNESS", "codex-cli")
     monkeypatch.setenv("SGE_CODER_API_KEY", "sk-SECRET-123")
     started = []
     monkeypatch.setattr(coder, "implement",
@@ -300,8 +355,10 @@ def test_role_agent_describes_and_execs(monkeypatch, capsys):
     import os
     import role_agent
     monkeypatch.setattr(role_agent, "_load_env", lambda: None)
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-SECRET-123")
+    monkeypatch.setenv("SGE_INTENT_BASE_URL", "https://api.example/v1")
+    monkeypatch.setenv("SGE_INTENT_API_KEY", "sk-SECRET-123")
     monkeypatch.setenv("SGE_INTENT_MODEL", "gpt-5.5")
+    monkeypatch.setenv("SGE_INTENT_HARNESS", "codex-cli")
     assert role_agent.main(["--describe"]) == 0
     out = capsys.readouterr().out
     assert "intent" in out and "gpt-5.5" in out and "SECRET" not in out
@@ -357,3 +414,32 @@ def test_any_other_refusal_is_still_reported_at_once(monkeypatch):
     monkeypatch.setattr(reviewer, "_client", _refusing)
     with pytest.raises(RuntimeError, match="provider refused: .*User not found"):
         reviewer.brief_hard_change("report", "old", "new")
+
+
+
+# ---- the example configurations ---------------------------------------------------
+
+def _example(name):
+    values = {}
+    for line in (Path(cli.__file__).parent / name).read_text(encoding="utf-8").splitlines():
+        if line.strip() and not line.startswith("#") and "=" in line:
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip()
+    return values
+
+
+@pytest.mark.parametrize("name", [".env.example", ".env.deepseek.example"])
+def test_an_example_holds_no_key(name):
+    """They are published. A key in one is a key in every clone."""
+    keys = {k: v for k, v in _example(name).items() if k.endswith("_API_KEY")}
+    assert set(keys) == {llm.variable(r, "API_KEY") for r in llm.ROLES}
+    # empty, or an invented, shortened placeholder like sk-...a7c -- never a key
+    assert all(v == "" or re.fullmatch(r"sk-\.\.\.[a-z0-9]{3}", v) for v in keys.values()), keys
+
+
+def test_the_deepseek_example_is_complete_but_for_the_keys(monkeypatch):
+    """Copied as it is, every role names what is left to do: its key."""
+    for key, value in _example(".env.deepseek.example").items():
+        monkeypatch.setenv(key, value)
+    for role in llm.ROLES:
+        assert llm.missing(role) == [f"{llm.variable(role, 'API_KEY')} is still the placeholder"]

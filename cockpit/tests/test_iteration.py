@@ -204,8 +204,10 @@ def test_the_floor_is_computed_without_writing_into_the_stream(graph_root, capsy
 # ---- the session and the resume ----------------------------------------------------
 
 def test_resume_continues_the_same_session(monkeypatch):
+    monkeypatch.setenv("SGE_INTENT_BASE_URL", "https://api.example/v1")
     monkeypatch.setenv("SGE_INTENT_API_KEY", "k")
     monkeypatch.setenv("SGE_INTENT_MODEL", "m")
+    monkeypatch.setenv("SGE_INTENT_HARNESS", "codex-cli")
     argv, _env = codex_cli.command("intent", json_events=True, resume="t-1")
     assert argv[:3] == ["codex", "exec", "resume"]
     assert argv[-2:] == ["--json", "t-1"]                      # the prompt follows the id

@@ -7,6 +7,19 @@ import pytest
 import yaml
 
 
+@pytest.fixture(autouse=True)
+def _no_real_endpoints(monkeypatch):
+    """No test sees the roles configured in cockpit/.env. app.py loads that file
+    when it is imported, so without this every test after the first import ran
+    with real endpoints and keys -- a test could pass only because a person's
+    .env was filled, or reach a provider. A test that needs a role sets it."""
+    import os
+    for name in list(os.environ):
+        if name.startswith("SGE_") and name.endswith(("_BASE_URL", "_API_KEY", "_MODEL",
+                                                      "_HARNESS")):
+            monkeypatch.delenv(name, raising=False)
+
+
 def write_spec(directory: Path, body: str = "", **meta) -> Path:
     """Write a SPEC.md (frontmatter + body) into `directory`."""
     directory.mkdir(parents=True, exist_ok=True)

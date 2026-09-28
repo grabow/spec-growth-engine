@@ -3,85 +3,97 @@ one ENDPOINT per role, so which model, at which provider, plays which role is
 a choice.
 
   role        what it does                 set in cockpit/.env
-  ----------  ---------------------------  -----------------------------------
+  ----------  ---------------------------  -----------------------------------------
   planner  P  intent -> SPEC.md            SGE_PLANNER_BASE_URL / _API_KEY / _MODEL
-  reviewer H' drafts, delegation, goals    SGE_REVIEWER_...  (each unset field: P's)
-  intent   I  goal -> node intents (a run) SGE_INTENT_...    (URL, key: P's if unset)
-  coder    C  SPEC -> code                 SGE_CODER_...     (URL, key: P's if unset)
+  reviewer H' drafts, delegation, goals    SGE_REVIEWER_BASE_URL / _API_KEY / _MODEL
+  intent   I  goal -> node intents (a run) SGE_INTENT_BASE_URL / _API_KEY / _MODEL
+                                           / _HARNESS
+  coder    C  SPEC -> code                 SGE_CODER_BASE_URL / _API_KEY / _MODEL
+                                           / _HARNESS
 
-Every endpoint is OpenAI-compatible: P and H' are called from here; I and C are
-agents run by `codex exec` (agent/codex_cli.py) against the same kind of
-endpoint. A key comes from SGE_<ROLE>_API_KEY, or -- to keep it out of every
-file -- from the macOS keychain: SGE_<ROLE>_KEYCHAIN=<service name>, read the
-way ~/.claude/provider-switch.zsh reads DeepSeek's. The planner's defaults are
-OpenRouter and OPENROUTER_API_KEY, so a .env from before stays valid.
+Every role is set the same way, and only by its own settings: nothing falls
+back to another role, and nothing to a provider this code would have to know.
+Two roles on the same model repeat the same values -- which is what makes it
+visible that they are the same (the cockpit says so when H' reviews with P's
+model). P and H' are chat calls from here, against an OpenAI-compatible
+endpoint. I and C are AGENTS, run by a harness -- the agent CLI that plays the
+role -- which is the fourth setting of those two. The harness decides how the
+endpoint is handed over and what API it has to speak. There is one, and it is
+REQUIRED for I and C: `codex-cli`, the Codex CLI (https://github.com/openai/codex,
+the `codex` command), run as `codex exec` against an OpenAI-compatible endpoint
+(agent/codex_cli.py). A second harness is a second adapter, and an entry in
+HARNESSES.
 
-P and H' may be the same model; then H' reviews what its own model wrote, and
-the cockpit says so. Everything is read at CALL time, not import time, so a
-.env loaded after the import still counts.
+Everything is read at CALL time, not import time, so a .env loaded after the
+import still counts.
 """
 from __future__ import annotations
 
 import json
 import os
-import subprocess
 
 import openai
 
-OPENROUTER_BASE = "https://openrouter.ai/api/v1"
-DEFAULT_MODEL = "z-ai/glm-5.2"
 ROLES = ("planner", "reviewer", "intent", "coder")
+AGENT_ROLES = ("intent", "coder")
+FIELDS = ("BASE_URL", "API_KEY", "MODEL")
+# harness -> the executable it needs on PATH
+HARNESSES = {"codex-cli": "codex"}
+
+
+def fields(role: str) -> tuple[str, ...]:
+    """The settings a role takes: three, and a HARNESS for an agent role."""
+    return FIELDS + (("HARNESS",) if role in AGENT_ROLES else ())
+
+
+def variable(role: str, field: str) -> str:
+    """SGE_<ROLE>_<FIELD> -- the name, which is safe to show; never its value."""
+    return f"SGE_{role.upper()}_{field}"
 
 
 def _setting(role: str, field: str) -> str:
-    return (os.environ.get(f"SGE_{role.upper()}_{field}") or "").strip()
-
-
-def _key(role: str) -> tuple[str, str]:
-    """(key, where it came from) -- the second is safe to log, the first never."""
-    key = _setting(role, "API_KEY")
-    if key:
-        return key, f"SGE_{role.upper()}_API_KEY"
-    service = _setting(role, "KEYCHAIN")
-    if not service:
-        return "", ""
-    try:
-        run = subprocess.run(["security", "find-generic-password", "-a",
-                              os.environ.get("USER", ""), "-s", service, "-w"],
-                             capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.TimeoutExpired):
-        return "", ""
-    key = run.stdout.strip() if run.returncode == 0 else ""
-    return key, (f"keychain: {service}" if key else "")
+    return (os.environ.get(variable(role, field)) or "").strip()
 
 
 def endpoint(role: str) -> dict:
-    """{base_url, api_key, model, key_from} for a role. Unset fields fall back:
-    the reviewer to the planner field by field; intent and coder take the
-    planner's URL and key (not its model -- that must be chosen); the planner to
-    OpenRouter, OPENROUTER_API_KEY and DEFAULT_MODEL. `key_from` names WHERE the
-    key came from, never the key -- it is safe to log."""
+    """{base_url, api_key, model, harness, key_from} for a role, from its own
+    settings and nothing else (`harness` is '' for a chat role). `key_from`
+    names the variable the key came from ('' when there is none), never the
+    key -- it is safe to log."""
     if role not in ROLES:
         raise ValueError(f"unknown role {role!r}; one of {ROLES}")
-    if role == "planner":
-        own, source = _key("planner")
-        return {"base_url": _setting("planner", "BASE_URL") or OPENROUTER_BASE,
-                "api_key": own or os.environ.get("OPENROUTER_API_KEY", ""),
-                "model": _setting("planner", "MODEL") or DEFAULT_MODEL,
-                "key_from": source or "OPENROUTER_API_KEY"}
-    base = endpoint("planner")
-    own, source = _key(role)
-    model = _setting(role, "MODEL") or (base["model"] if role == "reviewer" else "")
-    return {"base_url": _setting(role, "BASE_URL") or base["base_url"],
-            "api_key": own or base["api_key"],
-            "model": model,
-            "key_from": source or f"the planner's ({base['key_from']})"}
+    key = _setting(role, "API_KEY")
+    return {"base_url": _setting(role, "BASE_URL"), "api_key": key,
+            "model": _setting(role, "MODEL"),
+            "harness": _setting(role, "HARNESS") if role in AGENT_ROLES else "",
+            "key_from": variable(role, "API_KEY") if key else ""}
+
+
+def missing(role: str) -> list[str]:
+    """What keeps this role from being called, one entry per setting: the name
+    of each one that is unset, or '<name> is not a URL' for an endpoint that
+    does not start with http:// or https://, or '<name> is still the
+    placeholder' for a key copied from an example unchanged (`sk-...`) -- each
+    fails only at the first call otherwise. [] when it can be called."""
+    out = []
+    for field in fields(role):
+        value = _setting(role, field)
+        if not value:
+            out.append(variable(role, field))
+        elif field == "BASE_URL" and not value.startswith(("http://", "https://")):
+            out.append(f"{variable(role, field)} is not a URL")
+        elif field == "API_KEY" and "..." in value:
+            out.append(f"{variable(role, field)} is still the placeholder")
+        elif field == "HARNESS" and value not in HARNESSES:
+            out.append(f"{variable(role, field)} is not a known harness "
+                       f"({' | '.join(HARNESSES)})")
+    return out
 
 
 def describe(role: str) -> str:
     """'<model> @ <base_url>' -- for logs and run records. Never the key."""
     ep = endpoint(role)
-    return f"{ep['model'] or '(no model set)'} @ {ep['base_url']}"
+    return f"{ep['model'] or '(no model set)'} @ {ep['base_url'] or '(no URL set)'}"
 
 
 def planner_model() -> str:
@@ -90,7 +102,7 @@ def planner_model() -> str:
 
 
 def reviewer_model() -> str:
-    """The reviewer's model; the planner's when none is set."""
+    """The reviewer's model."""
     return endpoint("reviewer")["model"]
 
 
@@ -100,14 +112,11 @@ def _client(role: str = "planner"):
         from openai import OpenAI
     except ImportError as exc:  # pragma: no cover
         raise RuntimeError("openai not installed; run 'uv sync'.") from exc
+    lacking = missing(role)
+    if lacking:
+        raise RuntimeError(f"the {role} is not configured: fix {', '.join(lacking)} in "
+                           "cockpit/.env (never hardcode the key)")
     ep = endpoint(role)
-    if not ep["api_key"]:
-        raise RuntimeError(
-            f"no API key for the {role}: set SGE_{role.upper()}_API_KEY or "
-            f"SGE_{role.upper()}_KEYCHAIN in cockpit/.env"
-            + (", or OPENROUTER_API_KEY" if role in ("planner", "reviewer") else "")
-            + " (never hardcode the key)."
-        )
     return OpenAI(base_url=ep["base_url"], api_key=ep["api_key"])
 
 

@@ -21,15 +21,14 @@ def _int_env(name: str, default: int) -> int:
     except (TypeError, ValueError):
         return default
 
+# Which model plays which role is NOT a cockpit setting: every role has its own
+# endpoint in cockpit/.env (agent/llm.py), and only there -- a second place would
+# silently overrule the first.
 _DEFAULTS = {
-    "planner_model": os.environ.get("SGE_PLANNER_MODEL", "z-ai/glm-5.2"),   # role P
-    # role H' (agent/llm.py): empty = the planner's model. Set it to make the
-    # review independent of the model that wrote the draft.
-    "reviewer_model": os.environ.get("SGE_REVIEWER_MODEL", ""),
-    "coder_cmd": os.environ.get("SGE_CODER_CMD", "codex exec"),
     "last_root": "",
-    # use GLM-5.2 to re-rank capability search + confirm duplicates semantically;
-    # falls back to lexical automatically when no API key is configured.
+    # let the planner's model re-rank capability search + confirm duplicates
+    # semantically; falls back to lexical automatically when the planner has no
+    # endpoint.
     "semantic_match": os.environ.get("SGE_SEMANTIC_MATCH", "1") not in ("0", "false", ""),
     # the draft gate D0..D2: 0 off, 1 advisory H'
     # draft review, 2 auto-clear the draft gate. The cockpit caps it at D2

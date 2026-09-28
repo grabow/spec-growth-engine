@@ -1,8 +1,9 @@
 """Coding agent (role C): implement a node within its context bundle.
 
-This shells out to a coding-agent CLI (default: `codex exec`). Override with the
-SGE_CODER_CMD environment variable, e.g. SGE_CODER_CMD="claude -p".
-The caller streams stdout (see app.py) so the UI stays responsive.
+C runs as a `codex exec` agent on its own endpoint (SGE_CODER_BASE_URL /
+_API_KEY / _MODEL in cockpit/.env; agent/codex_cli.command builds the argv and
+the environment that carries the key). The caller streams stdout (see app.py)
+so the UI stays responsive.
 
 Build-root detection (Model B): the agent runs in the nearest ancestor directory
 that holds a build manifest (pom.xml / pyproject.toml / Cargo.toml / package.json
@@ -12,12 +13,8 @@ the node's own directory.
 """
 from __future__ import annotations
 
-import os
-import shlex
 import subprocess
 from pathlib import Path
-
-DEFAULT_CMD = os.environ.get("SGE_CODER_CMD", "codex exec")
 
 # Build manifests that mark a project/build root, per ecosystem.
 BUILD_MANIFESTS = {
@@ -86,18 +83,26 @@ _FOLLOWUP = (
 )
 
 
+def command() -> tuple[list[str], dict]:
+    """(argv, environment) for C on its endpoint. Raises RuntimeError naming what
+    cockpit/.env still lacks for the coder."""
+    from . import codex_cli
+    return codex_cli.command("coder")
+
+
 def run_prompt(
-    prompt: str, cwd: str | None = None, command: str | list[str] | None = None,
+    prompt: str, cwd: str | None = None, command: list[str] | None = None,
     env: dict | None = None,
 ) -> subprocess.Popen:
-    """Low-level: launch the coding-agent CLI with `prompt` at `cwd`; streamable Popen.
+    """Low-level: launch C with `prompt` at `cwd`; streamable Popen.
 
-    `command` is a string (split like a shell would) or an argv list; `env`
-    replaces the environment (agent/codex_cli.py puts a role's key there, and
-    only there). stdin is /dev/null: `codex exec` WAITS on an open stdin, and
-    started from a pipe it hung until killed."""
-    cmd = list(command) if isinstance(command, (list, tuple)) \
-        else shlex.split(command or DEFAULT_CMD)
+    `command` is the argv (agent/codex_cli.command), `env` replaces the
+    environment -- the role's key is there, and only there. stdin is /dev/null:
+    `codex exec` WAITS on an open stdin, and started from a pipe it hung until
+    killed."""
+    cmd = list(command or [])
+    if not cmd:
+        raise ValueError("no command for the coder (agent/codex_cli.command)")
     return subprocess.Popen(
         cmd + [prompt],
         cwd=cwd,
@@ -114,7 +119,7 @@ def implement(
     node_id: str,
     node: dict | None = None,
     project_root: str | None = None,
-    command: str | list[str] | None = None,
+    command: list[str] | None = None,
     env: dict | None = None,
 ) -> subprocess.Popen:
     """Launch the coding agent in the node's build root; returns a streamable Popen."""

@@ -84,8 +84,8 @@ H' Reviewer,        judges what E cannot --           a chat call, NEVER  SGE_RE
                     place (§6). Authors no other
                     intent
 C  Coder            implements ONE node inside its    a codex exec agent  SGE_CODER_*
-                    context bundle; maintains its                         (or
-                    design, declares its observed                         SGE_CODER_CMD)
+                    context bundle; maintains its
+                    design, declares its observed
                     deps
 E  Engine           derives, validates, enforces the  CODE. It calls no   -- (and holds
                     gates, records; decides the       model, ever         no key)
@@ -100,14 +100,15 @@ endpoint -- URL, key, model -- in `cockpit/.env` (`cockpit/agent/llm.py`,
 
 ```text
 SGE_<ROLE>_BASE_URL    the provider's OpenAI-compatible URL
-SGE_<ROLE>_API_KEY     the key -- or, better, leave it empty and use:
-SGE_<ROLE>_KEYCHAIN    a macOS keychain service name; the key then sits in no file
+SGE_<ROLE>_API_KEY     the key
 SGE_<ROLE>_MODEL       the model id at that provider
+SGE_<ROLE>_HARNESS     I and C only: the agent CLI that runs them -- codex-cli,
+                       the Codex CLI (github.com/openai/codex), required for both
 <ROLE> = PLANNER | REVIEWER | INTENT | CODER
 
-unset:  the reviewer falls back to the planner field by field; I and C take the
-        planner's URL and key but NO model -- an agent role must be chosen.
-        The planner falls back to OpenRouter and OPENROUTER_API_KEY.
+unset:  nothing falls back -- not to another role, not to a provider. A role
+        without its three settings is not configured, and says which it
+        lacks. Two roles on the same model repeat the same values.
 wins:   a value already in the environment, so one run can override a role:
         SGE_CODER_MODEL=... uv run python cli.py run ROOT
 ```

@@ -35,18 +35,18 @@ uv run pytest -q             # the test count lives here, not in this file
   tkinter. Without that, `uv run python app.py` fails with "Can't find a
   usable init.tcl" while the libraries sit right there.
 - Deps: `openai`, `python-dotenv`, `pyyaml`, `python-frontmatter`, `networkx`.
-- **Planner/reviewer**: OpenRouter (OpenAI-compatible), model `z-ai/glm-5.2`.
-- **Coder**: `codex exec -p ki_con1 --skip-git-repo-check --sandbox danger-full-access`.
-- Secrets in `cockpit/.env` (git-ignored): `OPENROUTER_API_KEY`, `SGE_PLANNER_MODEL`,
-  `SGE_CODER_CMD`. Never in the code, never in `cockpit.json`.
-- Non-secret settings in `cockpit.json` (git-ignored): planner model, reviewer model
-  (empty = the planner's), coder command, last root, semantic matching, the
-  draft gate D0-D2 (key `draft_gate`), graph view state.
-- **One endpoint per role** (agent/llm.py, `.env.example`): `SGE_<ROLE>_BASE_URL`,
-  `_API_KEY` (or `_KEYCHAIN`), `_MODEL` for PLANNER, REVIEWER, INTENT, CODER. P and
-  H' are chat calls; I and C run as `codex exec` agents (agent/codex_cli.py,
-  role_agent.py). The key reaches only the process that needs it, never a command
-  or a log. H' unset = P's; then the cockpit says the review is not independent.
+- **One endpoint per role**, in `cockpit/.env` (git-ignored; agent/llm.py,
+  `.env.example`): `SGE_<ROLE>_BASE_URL`, `_API_KEY`, `_MODEL` for PLANNER,
+  REVIEWER, INTENT, CODER -- the same three lines for every role, nothing falls
+  back, no provider is built in -- and `_HARNESS` for I and C. P and H' are chat
+  calls; I and C run on the harness `codex-cli`, the Codex CLI (`codex exec`,
+  agent/codex_cli.py, role_agent.py), REQUIRED for them -- C also for the
+  cockpit's Codex button. The key reaches only the process that needs it,
+  never a command or a log. H' on P's model: the cockpit says the review is not
+  independent.
+- Non-secret settings in `cockpit.json` (git-ignored): last root,
+  semantic matching, the draft gate D0-D2 (key `draft_gate`), graph view state.
+  No model: which model plays a role is set in `.env` only.
 
 ## Modules — CHECKED
 
@@ -105,7 +105,7 @@ engine/            deterministic, authors no intent
   index.py         generate project.index.json (graph + capabilities + edges + evidence)
 agent/
   llm.py           what every model-backed role shares: client, call, parsing -- and
-                   one endpoint per role (URL, key or keychain, model); never logs a key
+                   one endpoint per role (URL, key, model); never logs a key
   codex_cli.py     a role (I, C) as a `codex exec` agent on its own endpoint: an
                    ad-hoc provider via -c, the key only in the child's environment
   planner.py       role P: intent -> SPEC.md draft; revise_spec for an existing node
@@ -113,7 +113,7 @@ agent/
   reviewer.py      role H': critique a draft (verdict / confidence / findings);
                    brief a pending HARD change (recommendation, risks, alternatives);
                    check a run's goal against TASK.md (the gaps, WHAT not how)
-  semantic.py      GLM-5.2 reranker + judge for the capability registry
+  semantic.py      reranker + judge for the capability registry (the planner's model)
 app.py             the Tk cockpit
 appconfig.py       persistent non-secret settings (cockpit.json)
 role_agent.py      start a role as a codex agent (`intent`, `coder`); --describe

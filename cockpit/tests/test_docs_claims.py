@@ -291,8 +291,6 @@ def test_status_lists_every_persisted_setting():
     import appconfig
     body = _status()
     described = {
-        "planner_model": "planner model", "reviewer_model": "reviewer model",
-        "coder_cmd": "coder command",
         "last_root": "last root", "semantic_match": "semantic matching",
         "draft_gate": "draft gate D0-D2", "graph_view": "graph view state",
     }
@@ -384,7 +382,7 @@ def test_the_table_names_every_model_backed_role_and_no_other():
     assert named == {r.upper() for r in llm.ROLES}, "the table and agent/llm.ROLES disagree"
 
 
-@pytest.mark.parametrize("field", ["BASE_URL", "API_KEY", "KEYCHAIN", "MODEL"])
+@pytest.mark.parametrize("field", ["BASE_URL", "API_KEY", "MODEL"])
 def test_every_setting_the_table_documents_is_one_the_code_reads(field):
     """Each name in the table must appear in the code that resolves it."""
     from agent import llm

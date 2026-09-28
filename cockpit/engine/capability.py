@@ -136,7 +136,7 @@ def find(
     """Rank capabilities by similarity to `query` (and optional signature).
 
     Lexical (token Jaccard) by default. If `reranker` is given (an injected
-    callable from agent.semantic, GLM-5.2), the top `prefilter` lexical
+    callable from agent.semantic), the top `prefilter` lexical
     candidates are re-scored semantically and the two scores are blended -- the
     engine stays deterministic; the AI is the injected dependency.
     `reranker(query, candidates) -> {node_id: score in [0,1]}`.
@@ -213,7 +213,7 @@ def duplicates(
     Skips pairs on the same ownership line (realization, not duplication) and
     pairs already connected by depends_on (one already reuses the other).
 
-    If `judge` is given (injected from agent.semantic, GLM-5.2), the surviving
+    If `judge` is given (injected from agent.semantic), the surviving
     candidate pairs are confirmed semantically and the LLM verdict adjusts the
     confidence -- handling "similar but not the same" (e.g. OCR vs no-OCR).
     `judge(pairs) -> {(a,b): {same: bool, confidence: float, reason: str}}`.

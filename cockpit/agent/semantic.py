@@ -1,4 +1,4 @@
-"""Semantic capability matching (role: AI judge) over GLM-5.2.
+"""Semantic capability matching (role: AI judge) on the planner's endpoint.
 
 The engine's capability registry is deterministic and lexical (token Jaccard).
 This module provides the OPTIONAL semantic layer as *injected* callables:
@@ -9,7 +9,8 @@ This module provides the OPTIONAL semantic layer as *injected* callables:
 Both are passed into engine.capability.find / .duplicates. Keeping the AI here
 (not in the engine) preserves the boundary "engine authors/asks nothing". If no
 API key is configured, the factories return None and the engine falls back to
-pure lexical matching -- the feature degrades, it never breaks the gate.
+pure lexical matching -- the feature degrades, it never breaks the gate. The
+model is the planner's (SGE_PLANNER_* in cockpit/.env).
 
 Design: retrieve-then-rerank. The engine does the cheap lexical prefilter; only
 the top candidates are sent to the LLM, so token cost stays bounded.

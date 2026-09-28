@@ -32,9 +32,14 @@ def main(argv: list[str]) -> int:
     from agent import codex_cli, llm
     if argv[:1] == ["--describe"]:
         for role in llm.ROLES:
-            runner = "codex exec" if role in codex_cli.AGENT_ROLES else "chat call"
             ep = llm.endpoint(role)
-            print(f"{role:9} {runner:10} {llm.describe(role)}   key: {ep['key_from']}")
+            runner = ((ep["harness"] or "(no harness)") if role in codex_cli.AGENT_ROLES
+                      else "chat call")
+            print(f"{role:9} {runner:10} {llm.describe(role)}   "
+                  f"key: {ep['key_from'] or '(none)'}")
+            lacking = llm.missing(role)
+            if lacking:
+                print(f"{'':9} NOT CONFIGURED: fix {', '.join(lacking)} in cockpit/.env")
         return 0
     if len(argv) < 2 or argv[0] not in codex_cli.AGENT_ROLES:
         print(__doc__, file=sys.stderr)

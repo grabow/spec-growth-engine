@@ -27,6 +27,7 @@ _DRAFT = ("---\nid: api.store\nparent: api\nkind: component\n"
 # ---- 1. the growth record -------------------------------------------------------
 
 def test_every_cli_growth_step_is_recorded_with_its_author(graph_root, monkeypatch):
+    monkeypatch.setenv("SGE_PLANNER_MODEL", "p-model")          # recorded as the step's `by`
     monkeypatch.setattr(planner, "draft_spec", lambda *_a, **_k: _DRAFT)
     monkeypatch.setattr(planner, "revise_spec",
                         lambda cur, change, **_k: cur.replace("keep(item)", "keep(item)\n  - drop(item)"))
@@ -38,7 +39,7 @@ def test_every_cli_growth_step_is_recorded_with_its_author(graph_root, monkeypat
     assert [(s["action"], s["author"], s["intent"]) for s in steps] == [
         ("drafted", "H", "keep items for later"),
         ("revised", "I", "items can be dropped")]
-    assert steps[0]["gate"] == "SOFT" and steps[0]["by"]
+    assert steps[0]["gate"] == "SOFT" and steps[0]["by"] == "p-model"
 
 
 def test_the_intents_command_shows_the_record(graph_root, monkeypatch, capsys):
@@ -52,8 +53,10 @@ def test_the_intents_command_shows_the_record(graph_root, monkeypatch, capsys):
 
 
 def test_an_agent_marks_what_it_writes(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("SGE_INTENT_BASE_URL", "https://api.example/v1")
+    monkeypatch.setenv("SGE_INTENT_API_KEY", "k")
     monkeypatch.setenv("SGE_INTENT_MODEL", "m")
+    monkeypatch.setenv("SGE_INTENT_HARNESS", "codex-cli")
     _argv, env = codex_cli.command("intent")
     assert env["SGE_ACTOR"] == "I"
 

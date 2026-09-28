@@ -235,7 +235,7 @@ second occurrence**. This is fully compatible with agile slice growth.
                              concurrent-capability-creation conflict on similar
                              open claims or already-built capabilities
 [done] Similarity            lexical (token Jaccard) by default; optional
-                             SEMANTIC layer via GLM-5.2 (agent/semantic.py),
+                             SEMANTIC layer via the planner's model (agent/semantic.py),
                              dependency-injected into find()/duplicates(). The
                              engine stays deterministic; lexical is the cheap
                              prefilter, the LLM re-ranks search hits (blended)

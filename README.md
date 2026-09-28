@@ -55,7 +55,15 @@ always runs and always blocks. See
 
 ## Getting started
 
-Requirements: Python 3.12 and [uv](https://docs.astral.sh/uv/).
+Requirements:
+
+- **Python 3.12** and [**uv**](https://docs.astral.sh/uv/) -- for everything.
+- **The Codex CLI** ([github.com/openai/codex](https://github.com/openai/codex),
+  the `codex` command: `npm install -g @openai/codex`) -- required for the
+  coder C (the cockpit's Codex button, `cli.py code`) and for agent runs, which
+  run I and C on it. The cockpit, the gate, drafting and reviews do not need it.
+- **An OpenAI-compatible endpoint and key per role you use** -- see
+  [Models and keys](#models-and-keys).
 
 ```sh
 cd cockpit
@@ -81,10 +89,38 @@ uv run python cli.py install-hook ~/work/notes  # in a git repo: the gate on eve
 uv run python cli.py run ~/work/notes           # an agent grows it, in rounds
 ```
 
-The gate is offline and needs no key. The model-backed roles (P, H', and the
-agents I and C) need OpenAI-compatible endpoints, one per role: copy
-`cockpit/.env.example` to `cockpit/.env` and fill it in. Agent runs use the
-[`codex`](https://github.com/openai/codex) CLI.
+The gate is offline and needs no key.
+
+## Models and keys
+
+Four roles call a model -- the planner P, the reviewer H', and the agents I
+and C -- and each has its own OpenAI-compatible endpoint, set in
+`cockpit/.env`. Copy `cockpit/.env.example` and fill in the roles you use -- or
+copy `cockpit/.env.deepseek.example`, a complete configuration for DeepSeek that
+needs only your key in place of each `sk-...`. Every
+role takes the same three lines; the two agents take a fourth, the harness that
+runs them -- the Codex CLI, `codex-cli`, the only one so far:
+
+```sh
+SGE_PLANNER_BASE_URL=https://...       # any OpenAI-compatible provider
+SGE_PLANNER_API_KEY=...
+SGE_PLANNER_MODEL=<model id>           # the same three lines for REVIEWER
+
+SGE_CODER_BASE_URL=https://...         # the same four lines for INTENT
+SGE_CODER_API_KEY=...
+SGE_CODER_MODEL=<model id>
+SGE_CODER_HARNESS=codex-cli
+```
+
+Nothing falls back: a role without its three lines is not configured, and
+whatever needs it says which settings are missing. Two roles on the same model
+repeat the same values -- for the reviewer that works, but a different model
+makes its review independent. Drafting needs the planner; reviews and briefs
+the reviewer; the coder needs C, and agent runs need I and C -- both on the
+Codex CLI. Details are in
+[`cockpit/README.md`](cockpit/README.md#models-endpoints-and-keys-cockpitenv);
+`uv run python role_agent.py --describe` shows who plays which role -- never a
+key.
 
 ## Repository
 

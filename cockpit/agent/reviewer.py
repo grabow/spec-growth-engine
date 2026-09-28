@@ -1,4 +1,5 @@
-"""Draft reviewer (role H', the architect's deputy) over GLM-5.2.
+"""Draft reviewer (role H', the architect's deputy), on its own endpoint
+(SGE_REVIEWER_* in cockpit/.env).
 
 At the SOFT gate after Draft, this gives a second, skeptical opinion on the
 planner's SPEC.md -- judging what the DETERMINISTIC engine cannot: contract

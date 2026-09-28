@@ -176,12 +176,16 @@ def blockers(root: str | Path, task: str | Path | None = None,
             out.append(f"no manual for {who}: {root}/{name} is missing "
                        f"(groundwork renders both)")
     for role in llm.ROLES:
-        endpoint = llm.endpoint(role)
-        if not (endpoint["api_key"] and endpoint["model"]):
-            out.append(f"no endpoint for the {role}: set SGE_{role.upper()}_MODEL and a key "
-                       f"in cockpit/.env")
-    if shutil.which("codex") is None:
-        out.append("codex is not on PATH -- I and C are run as `codex exec`")
+        lacking = llm.missing(role)
+        if lacking:
+            out.append(f"no endpoint for the {role}: fix {', '.join(lacking)} "
+                       "in cockpit/.env")
+    harnesses = {llm.endpoint(role)["harness"] for role in llm.AGENT_ROLES} & set(llm.HARNESSES)
+    for harness in sorted(harnesses):
+        command = llm.HARNESSES[harness]
+        if shutil.which(command) is None:
+            out.append(f"`{command}` is not on PATH -- I and C run on the harness "
+                       f"{harness} (install the Codex CLI: https://github.com/openai/codex)")
     if unsupervised and not autonomy.delegated(root):
         out.append("the delegation is off: an unsupervised run needs it on "
                    "(`cli.py delegate ROOT on`, or the switch beside the slider)")
@@ -312,9 +316,10 @@ def roles_text(mode: str, max_rounds: int, task: str) -> str:
     lines = [f"mode={mode}  max_rounds={max_rounds}  task={task}  "
              f"engine={commit or 'unknown'}"]
     for role in llm.ROLES:
-        runner = "codex exec" if role in codex_cli.AGENT_ROLES else "chat call"
+        runner = ((llm.endpoint(role)["harness"] or "(no harness)")
+                  if role in codex_cli.AGENT_ROLES else "chat call")
         lines.append(f"{role:9} {runner:10} {llm.describe(role)}   "
-                     f"key: {llm.endpoint(role)['key_from']}")
+                     f"key: {llm.endpoint(role)['key_from'] or '(none)'}")
     return "\n".join(lines) + "\n"
 
 

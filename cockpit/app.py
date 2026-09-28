@@ -49,7 +49,7 @@ from tkinter.scrolledtext import ScrolledText  # noqa: E402
 
 from dotenv import load_dotenv
 
-load_dotenv()  # read .env (OPENROUTER_API_KEY, ...)
+load_dotenv()  # read cockpit/.env: SGE_<ROLE>_BASE_URL / _API_KEY / _MODEL per role
 
 import appconfig
 import groundwork
@@ -58,7 +58,7 @@ import orchestrate
 import runlog
 import specfix
 import testrun
-from agent import coder, planner, reviewer, semantic
+from agent import coder, llm, planner, reviewer, semantic
 from engine import (
     accepted, assist, autonomy, capability, changeset, context, drift, graph, inbox,
     index as index_mod, intents, iteration, lifecycle, migration, nodes as nodeops,
@@ -586,7 +586,7 @@ class Cockpit(tk.Tk):
         dialog = GroundworkDialog(self, self.root_dir)
         try:
             from agent import planner
-            planner_available = bool(self.config_data.get("planner_model"))
+            planner_available = not llm.missing("planner")
             dialog._planner = planner if planner_available else None
         except ImportError:  # pragma: no cover
             pass
@@ -1009,7 +1009,7 @@ class Cockpit(tk.Tk):
         try:
             spec = planner.draft_spec(
                 intent, nid, parent, kind, self._spine(parent),
-                architecture=self.arch, model=self.config_data["planner_model"],
+                architecture=self.arch, model=llm.planner_model(),
                 capabilities=capability.build_registry(self.nodes),
                 targets=self._request_targets(),
             )
@@ -1081,20 +1081,21 @@ class Cockpit(tk.Tk):
         last = getattr(self, "_last_intent", None)
         if last and last[0] == nid:
             intents.record(self.root_dir, nid, last[1], last[2],
-                           by=self.config_data["planner_model"], gate=gate)
+                           by=llm.planner_model(), gate=gate)
             self._last_intent = None
 
     def _reviewer_model(self) -> str:
-        """The reviewer's model: its own setting, else the planner's (agent/llm.py)."""
-        return self.config_data.get("reviewer_model") or self.config_data["planner_model"]
+        """The reviewer's model (SGE_REVIEWER_MODEL in cockpit/.env)."""
+        return llm.reviewer_model()
 
     def _independence_note(self) -> str:
         """Said wherever a review is shown: a review by the model that wrote the
         draft is a second pass, not a second opinion."""
-        if self._reviewer_model() != self.config_data["planner_model"]:
+        if self._reviewer_model() != llm.planner_model():
             return ""
         return (f"\n  (H' reviewed with {self._reviewer_model()}, the model that drafted "
-                "it -- not an independent review. Set reviewer_model / SGE_REVIEWER_MODEL.)")
+                "it -- not an independent review. Give SGE_REVIEWER_* in cockpit/.env "
+                "another model.)")
 
     def _assess(self, nid: str, text: str) -> tuple[dict, dict] | None:
         """Change set + consumer impact of saving `text` as nid's SPEC.md
@@ -1128,7 +1129,7 @@ class Cockpit(tk.Tk):
         reject, low confidence or a declared protected zone -> escalate to the human."""
         def revise(text: str, instruction: str) -> str:
             return planner.revise_spec(text, instruction, architecture=self.arch,
-                                       model=self.config_data["planner_model"],
+                                       model=llm.planner_model(),
                                        spine=self._spine(self.nodes.get(nid, {}).get("parent")),
                                        consumers=nodeops.dependents_of(self.nodes, nid),
                                        targets=self._request_targets())
@@ -1224,7 +1225,7 @@ class Cockpit(tk.Tk):
         try:
             spec = planner.revise_spec(
                 current, instruction,
-                architecture=self.arch, model=self.config_data["planner_model"],
+                architecture=self.arch, model=llm.planner_model(),
                 spine=self._spine(self.nodes[nid].get("parent")),
                 consumers=nodeops.dependents_of(self.nodes, nid),
                 targets=self._request_targets(),
@@ -1378,11 +1379,11 @@ class Cockpit(tk.Tk):
 
     # ---- capability registry (horizontal reuse axis) --------------------
     def _semantic(self):
-        """Build the GLM-5.2 reranker+judge if enabled and a key is present.
+        """Build the reranker+judge (the planner's model) if enabled and configured.
         Returns (reranker, judge); either may be None -> lexical fallback."""
         if not self.config_data.get("semantic_match"):
             return None, None
-        model = self.config_data["planner_model"]
+        model = llm.planner_model()
         try:
             return semantic.make_reranker(model), semantic.make_judge(model)
         except Exception:
@@ -1949,12 +1950,18 @@ class Cockpit(tk.Tk):
         node = self.nodes.get(nid)
         broot = coder.build_root_for_node(node, self.root_dir) if node else None
 
+        # C on its own endpoint (cockpit/.env: SGE_CODER_*), as `cli.py code` runs it
+        try:
+            command, env = coder.command()
+        except RuntimeError as exc:
+            self._set(self.guidance, f"The coder cannot start: {exc}")
+            return
         # launch first so the monitor has the pid (codex can sit silent after an
         # `exec` for a while; the status bar shows it is still alive + working).
         try:
             proc = coder.implement(
                 bundle, nid, node=node, project_root=self.root_dir,
-                command=self.config_data["coder_cmd"],
+                command=command, env=env,
             )
         except OSError as exc:
             self._set(self.guidance, f"Could not launch coder: {exc}")
@@ -1988,7 +1995,7 @@ class Cockpit(tk.Tk):
         st = {
             "start": time.monotonic(), "last_output": time.monotonic(),
             "transcript": "", "bundle": bundle, "nid": nid, "cwd": str(broot) if broot else None,
-            "command": self.config_data["coder_cmd"], "running": False,
+            "command": command, "env": env, "running": False,
             "win": win, "status": status, "out": out, "entry": entry, "send_btn": send_btn,
         }
         send_btn.configure(command=lambda: self._codex_followup(st))
@@ -2050,7 +2057,7 @@ class Cockpit(tk.Tk):
         self._append_out(st["out"], f"\n\n>>> YOU: {msg}\n\n")
         prompt = coder.followup_prompt(st["bundle"], st["nid"], st["transcript"][-20000:], msg)
         try:
-            proc = coder.run_prompt(prompt, st["cwd"], st["command"])
+            proc = coder.run_prompt(prompt, st["cwd"], st["command"], st["env"])
         except OSError as exc:
             self._append_out(st["out"], f"(could not launch coder: {exc})\n")
             return
