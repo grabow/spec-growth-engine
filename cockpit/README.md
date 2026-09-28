@@ -110,7 +110,7 @@ guided  -           on          unsupervised  AFTER the run, never during it: wh
                                               the zones you declared.
 bare    D0          off         off           as above                              P + the invariants are
                                                                                     yours
-bare    D0          on          off           as above                              P, H' + the invariants
+bare    D0          on          off           as above                              P + the invariants
 bare    D1          off         off           as above                              P, H' + the invariants
 bare    D1          on          off           as above                              P, H' + the invariants
 bare    D2          off         off           as above                              P, H' + the invariants

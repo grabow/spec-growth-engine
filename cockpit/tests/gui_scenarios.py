@@ -398,6 +398,35 @@ def run_window_unsupervised():
            "the review did not open the Requests window")
 
 
+def new_project_scrolls():
+    """The New Project form is taller than a laptop screen once the goal fields
+    are open: it scrolls, its buttons stay outside the scrolled part, and
+    opening the goal scrolls the new fields into view."""
+    import app
+    c = _cockpit()
+    app.GroundworkDialog.grab_set = lambda self: None     # modal needs a viewable window
+    d = app.GroundworkDialog(c, str(c.proj))
+    _settle(d)
+    canvas = d._canvas
+    _check(int(canvas.cget("height")) <= d.winfo_screenheight() - 200,
+           "the form is taller than the screen allows")
+    buttons = [w for w in _walk(d) if isinstance(w, ttk.Button)
+               and w.cget("text") in ("Lay the floor", "Cancel")]
+    _check(len(buttons) == 2, "the buttons are gone")
+    _check(not any(str(b).startswith(str(canvas)) for b in buttons),
+           "the buttons scroll away with the form")
+    d.wants_run.set(True)
+    d._toggle_goal()
+    _settle(d)
+    _check(d.goal_frame.winfo_manager() == "grid", "the goal fields did not open")
+    top, bottom = canvas.yview()
+    _check(bottom == 1.0, f"the goal fields are not scrolled into view: {canvas.yview()}")
+    d.wants_run.set(False)
+    d._toggle_goal()
+    _check(d.goal_frame.winfo_manager() == "", "the goal fields did not close")
+    d._cancel()
+
+
 def _walk(w):
     yield w
     for ch in w.winfo_children():
@@ -407,7 +436,8 @@ def _walk(w):
 SCENARIOS = {f.__name__: f for f in (badge, validate, grant, invalid_grant, stale,
                                      hard_accept, hard_reject,
                                      run_window, run_locks_the_writers,
-                                     run_dialog_modes, run_window_unsupervised)}
+                                     run_dialog_modes, run_window_unsupervised,
+                                     new_project_scrolls)}
 
 if __name__ == "__main__":
     SCENARIOS[sys.argv[1]]()

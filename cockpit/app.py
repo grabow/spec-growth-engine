@@ -2289,6 +2289,10 @@ class GroundworkDialog(tk.Toplevel):
     what would be written, and only then applies.
 
     `result` is the answers dict, or None.
+
+    The form scrolls: with the goal fields open it is taller than a laptop
+    screen, and a dialog that grows past the screen hides its own buttons. The
+    buttons sit outside the scrolled part, so they are always in reach.
     """
 
     def __init__(self, parent: tk.Tk, initial_dir: str) -> None:
@@ -2297,8 +2301,30 @@ class GroundworkDialog(tk.Toplevel):
         self.result: dict | None = None
         self._planner = None          # set by the caller when P has an endpoint
 
-        body = ttk.Frame(self, padding=12)
-        body.pack(fill="both", expand=True)
+        buttons = ttk.Frame(self, padding=(12, 6, 12, 10))
+        buttons.pack(side="bottom", fill="x")
+        ttk.Button(buttons, text="Cancel", command=self._cancel).pack(side="right", padx=3)
+        ttk.Button(buttons, text="Lay the floor", command=self._ok).pack(side="right", padx=3)
+        ttk.Separator(self, orient="horizontal").pack(side="bottom", fill="x")
+
+        area = ttk.Frame(self)
+        area.pack(side="top", fill="both", expand=True)
+        self._canvas = tk.Canvas(area, highlightthickness=0, borderwidth=0)
+        scrollbar = ttk.Scrollbar(area, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        self._canvas.pack(side="left", fill="both", expand=True)
+        body = ttk.Frame(self._canvas, padding=12)
+        self._body = body
+        window = self._canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>", lambda _e: self._canvas.configure(
+            scrollregion=self._canvas.bbox("all")))
+        self._canvas.bind("<Configure>", lambda e: self._canvas.itemconfigure(
+            window, width=e.width))
+        self.bind_all("<MouseWheel>", self._wheel)            # macOS, Windows
+        self.bind_all("<Button-4>", lambda _e: self._canvas.yview_scroll(-1, "units"))
+        self.bind_all("<Button-5>", lambda _e: self._canvas.yview_scroll(1, "units"))
+        self.bind("<Destroy>", self._unbind_wheel)
         row = 0
 
         def field(label: str, value: str = "", width: int = 44) -> ttk.Entry:
@@ -2374,17 +2400,40 @@ class GroundworkDialog(tk.Toplevel):
             row=len(groundwork.TASK_PROMPTS) * 3, column=0, sticky="w", padx=(16, 0))
         row += 1
 
-        buttons = ttk.Frame(body)
-        buttons.grid(row=row, column=0, columnspan=4, pady=(12, 0), sticky="e")
-        ttk.Button(buttons, text="Cancel", command=self._cancel).pack(side="right", padx=3)
-        ttk.Button(buttons, text="Lay the floor", command=self._ok).pack(side="right", padx=3)
         self.bind("<Escape>", lambda _e: self._cancel())
+        self._fit_to_screen()
         self.transient(parent)
         self.grab_set()
         self.id_entry.focus_set()
 
+    def _fit_to_screen(self) -> None:
+        """As tall as the form, but never taller than the screen allows."""
+        self.update_idletasks()
+        width = self._body.winfo_reqwidth()
+        height = min(self._body.winfo_reqheight(), self.winfo_screenheight() - 200)
+        self._canvas.configure(width=width, height=max(height, 200))
+
+    def _wheel(self, event) -> None:
+        """Scroll the form with the wheel or the trackpad. macOS reports small
+        deltas, Windows multiples of 120."""
+        steps = -event.delta if abs(event.delta) < 120 else -event.delta // 120
+        self._canvas.yview_scroll(int(steps) or (-1 if event.delta > 0 else 1), "units")
+
+    def _unbind_wheel(self, event) -> None:
+        if event.widget is self:
+            for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+                self.unbind_all(sequence)
+
     def _toggle_goal(self) -> None:
-        self.goal_frame.grid() if self.wants_run.get() else self.goal_frame.grid_remove()
+        """Open or close the goal fields -- and, opening them, scroll them into
+        view: they appear at the bottom, where a tall form would hide them."""
+        if self.wants_run.get():
+            self.goal_frame.grid()
+            self._fit_to_screen()
+            self._canvas.configure(scrollregion=self._canvas.bbox("all"))
+            self._canvas.yview_moveto(1.0)
+        else:
+            self.goal_frame.grid_remove()
 
     def _browse(self) -> None:
         chosen = filedialog.askdirectory(title="New project directory", parent=self)
