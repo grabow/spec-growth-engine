@@ -1,0 +1,409 @@
+"""Planner agent (role P): natural language + examples -> SPEC.md draft.
+
+Uses OpenRouter (OpenAI-compatible API) with function calling for structured
+output. This authors intent, so its output is ALWAYS shown to the human for
+review before it becomes truth. The key is read from the environment / .env;
+never hardcode it (and never commit .env).
+"""
+from __future__ import annotations
+
+
+import frontmatter
+import yaml
+
+from .llm import _call_tool, _client, planner_model
+
+SPEC_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "emit_spec",
+        "description": "Emit a minimal SPEC.md draft for exactly one node.",
+        "parameters": {
+            "type": "object",
+            "required": ["contract"],
+            "properties": {
+                "contract": {
+                    "type": "object",
+                    "properties": {
+                        "provides": {"type": "array", "items": {"type": "string"}},
+                        "invariants": {"type": "array", "items": {"type": "string"}},
+                        "error_behavior": {"type": "array", "items": {"type": "string"}},
+                        "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+                    },
+                },
+                "design": {
+                    "type": "object",
+                    "properties": {
+                        "approach": {"type": "string"},
+                        "verification": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "How the contract is proven: one line per check. "
+                            "Derive from acceptance_criteria. Mark any check needing a live "
+                            "credential or network as 'runs only when <VAR> is set, skipped "
+                            "otherwise'. Avoid 'word: word' colons (YAML).",
+                        },
+                    },
+                },
+                "depends_on": {"type": "array", "items": {"type": "string"}},
+                "code": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Directory-scoped, non-recursive code globs (e.g. ['*.py']) "
+                    "for code-owning nodes; empty for system/container.",
+                },
+                "decision_requests": {
+                    "type": "array",
+                    "description": "A decision ABOVE this node that it needs and cannot "
+                    "make: an ARCHITECTURE.md invariant, or another node's contract. It "
+                    "GRANTS nothing -- it asks H, and the node waits. Use it instead of "
+                    "quietly assuming the decision in this contract.",
+                    "items": {
+                        "type": "object",
+                        "required": ["target", "proposal", "reason"],
+                        "properties": {
+                            "target": {"type": "string",
+                                       "description": "ARCHITECTURE.md, or the id of the "
+                                       "node whose contract must change"},
+                            "proposal": {"type": "string",
+                                         "description": "the decision, worded as it should "
+                                         "appear in the target"},
+                            "reason": {"type": "string", "description": "why it is needed"},
+                        },
+                    },
+                },
+                "body": {"type": "string", "description": "Short prose for below the frontmatter."},
+            },
+        },
+    },
+}
+
+
+def _clean_deps(deps, node_id: str, parent_id: str | None) -> list[str]:
+    """Safety net: depends_on must never include self or the parent (ownership,
+    not usage), and must be de-duplicated while preserving order."""
+    forbidden = {node_id, parent_id}
+    out: list[str] = []
+    for d in deps or []:
+        if d and d not in forbidden and d not in out:
+            out.append(d)
+    return out
+
+
+def _clean_waiver(data: dict) -> None:
+    """Downgrade any `waiver` the planner drafted to a REQUEST, in place.
+
+    GOVERNANCE §8: agents may request a deviation, only H grants one. The gate
+    cannot see who typed a line, so the planner enforces its half at the
+    authoring end: whatever it proposes arrives as `state: requested`, with the
+    owner and expiry removed -- those are the grant, and the grant is H's.
+    A deviation the planner needs is thereby recorded instead of hidden.
+    """
+    exc = data.get("waiver")
+    if exc is None:
+        return
+    if not isinstance(exc, dict):
+        data.pop("waiver", None)
+        return
+    request = {"state": "requested"}
+    for key in ("kind", "reason"):
+        if exc.get(key):
+            request[key] = exc[key]
+    proposed = exc.get("proposed_expiry") or exc.get("expires")
+    if proposed:
+        request["proposed_expiry"] = proposed
+    data["waiver"] = request
+
+
+def _clean_requests(value, targets: set[str] | None) -> list[dict]:
+    """The decision requests the planner may record: shape checked, target checked,
+    duplicates dropped.
+
+    A request grants nothing, so there is no authority to downgrade (unlike a
+    waiver) -- but there is a trap to avoid. `engine/decisions.issues` makes a
+    request whose target is neither ARCHITECTURE.md nor an existing node a HARD
+    error, and a HARD error blocks the gate; since only H (or H', answering in an
+    unsupervised run) deletes a request, a
+    target the planner invented would wall the graph in. So an entry whose target
+    is not known is dropped here, where the caller still knows the node ids and a
+    retry costs one revise.
+    """
+    out: list[dict] = []
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict):
+            continue
+        entry = {k: str(item.get(k, "")).strip() for k in ("target", "proposal", "reason")}
+        if not all(entry.values()):
+            continue
+        if targets is not None and entry["target"] not in targets:
+            continue
+        if entry not in out:
+            out.append(entry)
+    return out
+
+
+# Fields the planner never authors. A revise must carry them through untouched:
+# they record decisions -- a granted waiver, an exclusion, a declared protected
+# zone -- that belong to H, or questions waiting for H (decision requests), and
+# the planner rebuilding the frontmatter used to erase them silently. Run 05
+# died of exactly that: `protected: true` vanished on the first revise of
+# svc.cli, the change set called it "protection removed" (correctly), and the
+# intent author -- which may not edit a spec by hand -- asked P to restore it,
+# which P could not, because every revise dropped it again. It ended BLOCKED.
+_PRESERVED_ON_REVISE = ("waiver", "excluded", "protected")
+# `decision_requests` is not in that list any more: it is both PRESERVED and
+# AUTHORED now (see _merge_requests), which the loop below cannot express.
+
+
+def _clean_code(code, kind: str) -> list[str]:
+    """Only code-owning kinds carry globs; keep non-empty strings, de-duplicated.
+    `**` is allowed (root-relative package globs are intentionally recursive)."""
+    if kind not in ("component", "code"):
+        return []
+    out: list[str] = []
+    for c in code or []:
+        if isinstance(c, str) and c and c not in out:
+            out.append(c)
+    return out
+
+
+def _no_spec(finish: str | None) -> str:
+    """Why a draft/revise came back without a spec, for 'Draft unavailable: ...'."""
+    return f"the model answered without a spec (finish_reason={finish!r}). Try again."
+
+
+def draft_spec(
+    intent: str,
+    node_id: str,
+    parent_id: str | None,
+    kind: str,
+    neighbor_contracts: dict | None = None,
+    architecture: str = "",
+    model: str | None = None,
+    capabilities: list[dict] | None = None,
+    targets: set[str] | None = None,
+) -> str:
+    """Return a SPEC.md draft (YAML frontmatter + prose) as an ASCII string.
+
+    `neighbor_contracts` are the ancestors' contracts (the Spine: the owning
+    container's code layout is there); `capabilities` the registry
+    (engine.capability.build_registry) -- what exists, so a draft can depend on
+    it instead of re-promising it.
+    Raises RuntimeError when no draft can be had -- no key, the provider refuses,
+    the answer is cut off or carries no spec -- with the reason, for the caller
+    to show."""
+    client = _client()
+    prompt = (
+        f"Produce a minimal SPEC.md draft for node `{node_id}` "
+        f"(kind {kind}, parent {parent_id}).\n"
+        f"User intent (natural language + examples):\n{intent}\n\n"
+        f"ANCESTOR CONTRACTS -- the Spine, root to parent; the owning container's code "
+        f"layout is here (for consistency, do NOT change them):\n"
+        f"{neighbor_contracts or {}}\n\n"
+        f"EXISTING CAPABILITIES (reuse: if one already provides what the intent needs, "
+        f"put its node in depends_on instead of promising it again):\n"
+        f"{_capability_lines(capabilities)}\n\n"
+        f"ARCHITECTURE.md (global invariants, incl. the implementation language):\n"
+        f"{architecture or '(none)'}\n\n"
+        "EDGE-TYPE RULES (critical, do not confuse the two):\n"
+        f"- `parent` ({parent_id}) is an OWNERSHIP edge ('belongs to' / 'consists "
+        "of'). It is NOT a dependency.\n"
+        "- `depends_on` is the USAGE edge: ONLY other nodes whose PUBLIC CONTRACT "
+        "this node actually calls. It must NEVER contain the parent, any ancestor, "
+        "the node itself, or any child.\n"
+        "- Never infer a dependency from containment; only from real usage. "
+        "A leaf that uses nothing => depends_on: []. Dependencies must be acyclic.\n\n"
+        "CODE OWNERSHIP (the CODE tree is SEPARATE from the SPEC tree):\n"
+        "- Decide WHERE this node's code lives from the OWNING CONTAINER's code-layout "
+        "invariants (shown in the ancestor contracts / Spine above) -- language and "
+        "layout are per-container, not global. Set `code` to PROJECT-ROOT-RELATIVE globs "
+        "pointing INTO that code tree; code is NOT placed next to the SPEC.md.\n"
+        "- Derive the glob from that container convention + this node's id (e.g. a single "
+        "Maven-module container `cli` -> component `cli.hello` owns "
+        "['cli/src/main/java/app/hello/**', 'cli/src/test/java/app/hello/**']). Keep owners disjoint.\n"
+        "- A `component` or `code` node MUST own a non-empty glob -- NEVER leave code: [] "
+        "for a code-owning node (that abdicates the layout decision to the coder).\n"
+        "- Only `system`/`container` (pure decomposition) may set code: [] (a container "
+        "may also own just its build manifest, e.g. ['cli/pom.xml']).\n\n"
+        "VERIFICATION (design.verification): give one line per check that proves the "
+        "contract, derived from acceptance_criteria -- the INWARD 'how to verify', "
+        "distinct from the OUTWARD acceptance_criteria 'what to prove'. Any check that "
+        "needs a live credential or network MUST be marked 'runs only when <ENV_VAR> "
+        "is set, skipped otherwise' (per the ARCHITECTURE.md testing invariant: tests "
+        "pass offline). Do not use 'word: word' colons inside list items (YAML). For a "
+        "pure system/container with no behaviour of its own, verification may be [].\n"
+        "ABOVE YOU: a decision this node needs but may not make -- an ARCHITECTURE.md "
+        "invariant, or a change to another node's contract -- goes in `decision_requests` "
+        "(target, proposal worded as it should appear there, reason). It grants nothing "
+        "and it asks H. Record it there instead of assuming it in this contract.\n\n"
+        "CONTENT RULES: only the contract of THIS change; derive acceptance_criteria "
+        "from the examples; do not pre-specify unrelated future components; keep it "
+        "lean. Call the emit_spec function."
+    )
+    data, finish = _call_tool(client, SPEC_TOOL, prompt, model=model)
+    if not data:
+        raise RuntimeError(_no_spec(finish))
+    _clean_waiver(data)  # the planner may request a deviation, never grant it
+
+    frontmatter = {
+        "id": node_id,
+        "parent": parent_id,
+        "kind": kind,
+        "contract": data.get("contract", {}),
+        "design": data.get("design", {}),
+        "depends_on": _clean_deps(data.get("depends_on"), node_id, parent_id),
+        "code": _clean_code(data.get("code"), kind),  # always present ([] if none)
+        "status": "specd",
+    }
+    if data.get("waiver"):
+        frontmatter["waiver"] = data["waiver"]  # already downgraded to a request
+    requests = _clean_requests(data.get("decision_requests"), targets)
+    if requests:
+        frontmatter["decision_requests"] = requests  # asks H; grants nothing
+    head = yaml.safe_dump(frontmatter, sort_keys=False, allow_unicode=False).rstrip()
+    body = data.get("body", "").strip()
+    return f"---\n{head}\n---\n\n{body}\n"
+
+
+def _capability_lines(capabilities: list[dict] | None) -> str:
+    return "\n".join(f"- {c['node']}: {c.get('provides', [])}"
+                     for c in capabilities or []) or "(none)"
+
+
+def _keep_omitted(revised, current) -> dict:
+    """Omission is not deletion. A key the model left out of a revised mapping
+    (the contract, the design) comes back from the current spec: revise promises
+    to keep what the request does not touch, and a real revise dropped `purpose`
+    without being asked."""
+    out = dict(revised) if isinstance(revised, dict) else {}
+    for key, value in (current if isinstance(current, dict) else {}).items():
+        out.setdefault(key, value)
+    return out
+
+
+def _merge_requests(new: list[dict], current) -> list[dict]:
+    """The requests a revised spec carries: every one already there, verbatim and
+    first, then whatever the planner adds. A pending question is H's to resolve --
+    H changes the target and deletes the entry -- so a revise may raise one and
+    must never drop one."""
+    out = [r for r in (current if isinstance(current, list) else []) if isinstance(r, dict)]
+    return out + [r for r in new if r not in out]
+
+
+def revise_spec(
+    current_spec: str,
+    instruction: str,
+    architecture: str = "",
+    model: str | None = None,
+    spine: dict | None = None,
+    consumers: list[str] | None = None,
+    targets: set[str] | None = None,
+) -> str:
+    """Return a REVISED SPEC.md: the model edits the CURRENT spec per `instruction`.
+
+    Unlike draft_spec (which regenerates from scratch and resets status to 'specd'),
+    revise carries the existing spec in, preserves every field not explicitly changed,
+    and keeps id / parent / kind / status. The result is still human-reviewed before
+    it becomes truth. Raises RuntimeError like draft_spec.
+    """
+    client = _client()
+    try:
+        fm = dict(frontmatter.loads(current_spec).metadata)
+    except Exception:
+        fm = {}
+    node_id = fm.get("id", "")
+    parent_id = fm.get("parent")
+    kind = fm.get("kind", "component")
+    status = fm.get("status", "specd")  # PRESERVED (not reset)
+
+    prompt = (
+        f"Revise the SPEC.md of node `{node_id}` (kind {kind}, parent {parent_id}).\n"
+        "Apply ONLY the requested change. PRESERVE every field you are not explicitly "
+        "changing -- code globs, depends_on, design.approach, design.verification, "
+        "invariants, error_behavior, and acceptance_criteria must come back unchanged "
+        "unless the change requires touching them.\n\n"
+        f"CURRENT SPEC.md:\n{current_spec}\n\n"
+        f"REQUESTED CHANGE:\n{instruction}\n\n"
+        f"ANCESTOR CONTRACTS -- the Spine; the owning container's code layout is here "
+        f"(do NOT change them):\n{spine or {}}\n\n"
+        f"CONSUMERS -- nodes whose depends_on names this one and rely on its contract:\n"
+        f"{', '.join(consumers or []) or '(none)'}\n\n"
+        "GROWTH: prefer an ADDITIVE change -- add a new operation next to an old one "
+        "rather than rewording or removing it; add a promise rather than tighten one. "
+        "Write an addition as a NEW `provides` entry of its own (a new field of a "
+        "returned record gets its own line, e.g. 'Text.size: ...') and leave the "
+        "existing entries word for word: the engine reads contracts as text, and a "
+        "reworded entry counts as removed, so it would hold a pure addition as a "
+        "breaking change. "
+        "If the requested change cannot be additive, make it anyway and say in the "
+        "prose which promise changes and why: the engine holds a breaking change for a "
+        "decision, and its consumers must follow.\n\n"
+        f"ARCHITECTURE.md (global invariants):\n{architecture or '(none)'}\n\n"
+        "ABOVE YOU: a decision this node needs but may not make -- an ARCHITECTURE.md "
+        "invariant, or a change to another node's contract -- goes in `decision_requests` "
+        "(target, proposal, reason). It grants nothing and it asks H; the requests already "
+        "in the spec stay as they are, they are H's to resolve.\n\n"
+        "RULES: `depends_on` is USAGE only (never parent/ancestor/self/child; acyclic). "
+        "`code` globs are PROJECT-ROOT-RELATIVE and point into the code tree per the "
+        "owning container's code-layout invariants in the Spine (code is separate from the "
+        "spec tree); a code-owning component never has code: []. `design.verification` is one line per "
+        "check derived from acceptance_criteria; mark live-credential/network checks as "
+        "'runs only when <ENV_VAR> is set, skipped otherwise'; no 'word: word' colons in "
+        "list items (YAML). Return the COMPLETE updated spec via emit_spec."
+    )
+    data, finish = _call_tool(client, SPEC_TOOL, prompt, model=model)
+    if not data:
+        raise RuntimeError(_no_spec(finish))
+    _clean_waiver(data)  # a revise may request one; an existing grant is kept below
+
+    # Omission is not deletion, for the head fields too: a key the model left
+    # out comes back from the current spec. `code` goes one further -- an EMPTY
+    # list comes back as well, asked for or not: a node that owns code never
+    # has code: [] (the prompt says so), and P emptied svc.cli's four globs in
+    # run 05, which orphaned five files and blocked the gate. `depends_on` is
+    # the one a revise may legitimately empty, so an explicit [] stands there.
+    given = data.get("depends_on")
+    code = _clean_code(data.get("code"), kind)
+    head_meta = {
+        "id": node_id,
+        "parent": parent_id,
+        "kind": kind,
+        "contract": _keep_omitted(data.get("contract"), fm.get("contract")),
+        "design": _keep_omitted(data.get("design"), fm.get("design")),
+        "depends_on": _clean_deps(given, node_id, parent_id) if given is not None
+        else list(fm.get("depends_on") or []),
+        "code": code or _clean_code(fm.get("code"), kind),
+        "status": status,  # carried through, unlike draft
+    }
+    requests = _merge_requests(_clean_requests(data.get("decision_requests"), targets),
+                               fm.get("decision_requests"))
+    if requests:
+        head_meta["decision_requests"] = requests
+    # The docstring promises every field not explicitly changed survives. It did
+    # not: a granted waiver and an `excluded` list vanished on every revise.
+    for key in _PRESERVED_ON_REVISE:
+        if key in fm:
+            head_meta[key] = fm[key]           # H's decision, verbatim
+        elif key == "waiver" and data.get("waiver"):
+            head_meta[key] = data["waiver"]  # a new proposal, as a request
+    head = yaml.safe_dump(head_meta, sort_keys=False, allow_unicode=False).rstrip()
+    body = data.get("body", "").strip()
+    return f"---\n{head}\n---\n\n{body}\n"
+
+
+def one_line(prompt: str, model: str | None = None) -> str:
+    """One sentence from P, for a caller that wants wording rather than a spec
+    (groundwork.propose). No tool call: there is no structure to emit, and a
+    tool would only add a way to fail. Raises RuntimeError like the rest of this
+    module when the provider refuses; the caller decides what that means."""
+    import openai
+    client = _client()
+    try:
+        resp = client.chat.completions.create(
+            model=model or planner_model(),
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except openai.APIError as exc:
+        raise RuntimeError(f"the provider refused: {exc}") from exc
+    text = (resp.choices[0].message.content or "").strip()
+    return text.splitlines()[0].strip().strip('"') if text else ""

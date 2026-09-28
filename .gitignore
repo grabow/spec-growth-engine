@@ -1,0 +1,17 @@
+# Secrets — never commit
+.env
+config.json
+cockpit.json
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated
+project.index.json
+.sge/
+
+# macOS
+.DS_Store

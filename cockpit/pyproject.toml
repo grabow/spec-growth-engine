@@ -1,0 +1,25 @@
+[project]
+name = "sge-cockpit"
+version = "0.1.0"
+description = "Spec Growth Engine - guided cockpit (headless engine + Tk shell)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "openai>=1.40",
+    "python-dotenv>=1.0",
+    "pyyaml>=6.0",
+    "python-frontmatter>=1.1",
+    "networkx>=3.0",
+]
+
+[tool.uv]
+# This is an application, not a library: do not try to build/install it.
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

@@ -1,0 +1,441 @@
+"""Run the intent author I in ROUNDS until the goal is met (AUTONOMY.md: the run).
+
+  uv run python orchestrate.py ROOT --task TASK.md [--max-rounds N] [--unsupervised]
+                               [--readable] PROMPT
+
+Usually started by the cockpit (Start a run...) or `cli.py run ROOT`, which
+both land here. The project can be anywhere: everything a run records goes into
+the project itself.
+
+The run switch is off | on | unsupervised. This is `on` -- H answers what is
+above a node, between runs -- and, with --unsupervised, the setting in which H'
+answers it between ROUNDS, in H's place, and H reviews every answer afterwards
+(engine/unsupervised.py). An unsupervised run needs the delegation on.
+
+One `codex exec` session of I is one round. After it, E checks the floor (it
+records the tests and runs the gate) and, on a green floor, H' checks the goal
+(TASK.md against the specs and the tests). engine/iteration.py decides whether
+I resumes the SAME session -- `codex exec resume`, with its memory of the run --
+told what is missing, or the run stops, and why.
+
+stdout is the run's event stream: codex's own events, one `sge.round` event
+after every round, one `sge.run` event at the end, and one `sge.after` for what
+E and H' did once it was over (runlog.py renders them) -- or, with --readable,
+those lines already rendered. Every run is recorded in <ROOT>/.sge/runs/:
+
+  NN.jsonl   the event stream, as it came
+  NN.log     one readable line per event (runlog.py) -- follow it with tail -f
+  NN.roles   who played which role (model, endpoint -- never a key), the mode,
+             the round limit and the engine's commit
+
+Every round is also in the audit log (<ROOT>/.sge/autonomy.jsonl).
+
+After the run -- whatever its outcome -- E records the tests of the final state,
+H' decides what the delegation lets it (when it is on) and briefs every pending
+HARD change that has no fresh brief, so H finds the homework done
+(`after`). Without a key the run is still complete, only undecided and
+unprepared.
+The exit code is 0 for a run that ends done, 1 for any other end (`asking`
+included: the work stands, but a decision request waits for H), 2 when I cannot
+start. MAX_ROUNDS=1 is one session and no second: a run without rounds.
+"""
+from __future__ import annotations
+
+import argparse
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+import runlog  # noqa: E402
+from engine import autonomy, iteration, lifecycle, parser, unsupervised as unsup  # noqa: E402
+
+
+def session(argv: list[str], prompt: str, env: dict, out) -> dict:
+    """Run one codex session; pass its events through to `out`; return what the
+    rule needs: the session id, I's last message, whether it did any work, and
+    why it failed, if it did."""
+    proc = subprocess.Popen(argv + [prompt], stdin=subprocess.DEVNULL,   # see codex_cli
+                            stdout=subprocess.PIPE, text=True, env=env)
+    info = {"thread": None, "message": "", "worked": 0, "failed": None}
+    last_error = ""
+    for line in proc.stdout:  # type: ignore[union-attr]
+        out.write(line)
+        out.flush()
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        kind, item = ev.get("type"), ev.get("item") or {}
+        if kind == "thread.started":
+            info["thread"] = ev.get("thread_id")
+        elif kind == "item.completed" and item.get("type") == "agent_message":
+            info["message"] = item.get("text", "")
+        elif kind == "item.completed" and item.get("type") in ("command_execution",
+                                                                  "file_change"):
+            info["worked"] += 1
+        elif kind == "turn.failed":
+            info["failed"] = (ev.get("error") or {}).get("message") or "the turn failed"
+        elif kind == "error":
+            # also sent for a retry the session survives: remembered, not fatal
+            last_error = ev.get("message", "")
+    code = proc.wait()
+    if code and not info["failed"]:
+        info["failed"] = f"codex exited with {code}" + (f": {last_error}" if last_error else "")
+    if not info["thread"] and not info["failed"]:
+        info["failed"] = "no session was started"
+    return info
+
+
+def floor(root: str) -> dict:
+    """E's floor: record the tests (`cli.py test`), run the gate, and read the
+    questions the graph is waiting on -- a green floor over an open decision
+    request is not a finished run (engine/iteration.open_requests)."""
+    import cli
+    tests, gate = io.StringIO(), io.StringIO()
+    with redirect_stdout(tests), redirect_stderr(tests):
+        t = cli.cmd_test(root)
+    with redirect_stdout(gate), redirect_stderr(gate):
+        g = cli.cmd_gate(root)
+    return {"tests": {"passed": t == 0, "text": tests.getvalue()},
+            "gate": {"passed": g == 0, "text": gate.getvalue()},
+            "requests": iteration.open_requests(parser.load_nodes(root)),
+            "green": t == 0 and g == 0}
+
+
+def goal(root: str, task: str, fl: dict, previous: list[str] = ()) -> dict:
+    """H' checks the goal against the facts E computed. {"gaps", "closed",
+    "summary", "model"}, or {"unavailable": why} -- never an exception: an
+    unreachable reviewer is a fact the rule knows how to handle. `previous` are
+    the gaps of the last round, which it must answer for before it looks for new
+    ones (agent/reviewer.check_goal)."""
+    import testrun
+    from agent import reviewer
+    nodes = parser.load_nodes(root)
+    facts = iteration.facts(nodes, root, fl, testrun.build_roots(nodes, root))
+    try:
+        result = reviewer.check_goal(task, facts, previous)
+    except RuntimeError as exc:
+        return {"unavailable": str(exc)}
+    if result is None:
+        return {"unavailable": "H' gave no usable answer"}
+    lifecycle.log_autonomy(root, {"actor": "H'", "by": result["model"],
+                                  "action": "goal-checked", "gaps": len(result["gaps"]),
+                                  "waiting": len(result.get("waiting") or []),
+                                  "closed": len(result.get("closed") or [])})
+    return result
+
+
+UNSUPERVISED_NOTE = ("This run is UNSUPERVISED: nobody but H' answers your decision "
+                     "requests, between rounds -- read \"In an unsupervised run\" in "
+                     "ORCHESTRATOR.md.")
+
+
+def first_prompt(unsupervised: bool = False) -> str:
+    """The prompt a run starts with: read the manual, the goal is in TASK.md, and
+    end with DONE or BLOCKED. It says nothing about the work itself -- that is
+    TASK.md's job, and a prompt that repeats it is a second goal nobody checks.
+    The cockpit and `cli.py run` both start with it."""
+    method = HERE.parent / "spec-growth-engine"
+    return ("Read ORCHESTRATOR.md in this directory and follow it exactly. Your task is "
+            f"described in TASK.md. The method documents are in {method}; the engine is "
+            "reached through the command the manual names, and is not yours to read. Work "
+            "until the task is done, or until you are blocked in a way you cannot resolve "
+            "honestly -- in that case stop and explain what blocked you. End your last "
+            "message with a line of its own: DONE, or BLOCKED: <reason>."
+            + (" " + UNSUPERVISED_NOTE if unsupervised else ""))
+
+
+def blockers(root: str | Path, task: str | Path | None = None,
+             unsupervised: bool = False) -> list[str]:
+    """What is missing before a run can start -- the "needs" column of the
+    README's table, checked instead of assumed. A run that starts without its
+    goal, its manuals or an endpoint fails slowly and in a way that reads like
+    the agent's fault. Empty list = ready. An unsupervised run also needs the
+    delegation on: without it every HARD change piles up for H, and the run
+    stands in for H everywhere except where it matters most."""
+    from agent import llm
+    root = Path(root)
+    out = []
+    if not (root / "SPEC.md").is_file():
+        out.append(f"no spec root: {root}/SPEC.md is missing (New Project..., or cli.py init)")
+    goal = Path(task) if task else root / "TASK.md"
+    if not goal.is_file():
+        out.append(f"no goal: {goal} is missing -- it is what H' checks the run against")
+    for name, who in (("ORCHESTRATOR.md", "the intent author"),
+                      ("AGENTS.md", "the method")):
+        if not (root / name).is_file():
+            out.append(f"no manual for {who}: {root}/{name} is missing "
+                       f"(groundwork renders both)")
+    for role in llm.ROLES:
+        endpoint = llm.endpoint(role)
+        if not (endpoint["api_key"] and endpoint["model"]):
+            out.append(f"no endpoint for the {role}: set SGE_{role.upper()}_MODEL and a key "
+                       f"in cockpit/.env")
+    if shutil.which("codex") is None:
+        out.append("codex is not on PATH -- I and C are run as `codex exec`")
+    if unsupervised and not autonomy.delegated(root):
+        out.append("the delegation is off: an unsupervised run needs it on "
+                   "(`cli.py delegate ROOT on`, or the switch beside the slider)")
+    return out
+
+
+def stand_in(root: str, task: str) -> dict:
+    """H' in H's place, between two rounds of an unsupervised run: it answers the
+    open decision requests and decides the pending HARD changes inside the
+    delegation (engine/unsupervised.stand_in)."""
+    from agent import reviewer
+    arch = parser.load_architecture(root)
+    return unsup.stand_in(
+        root,
+        lambda req, asker, spec, target: reviewer.answer_request(
+            req, asker, spec, target, task=task, architecture=arch),
+        lambda report, old, cur: reviewer.brief_hard_change(report, old, cur,
+                                                            architecture=arch))
+
+
+def _review_lines(stood: dict) -> list[str]:
+    """What H' decided in H's place this round, for H to review: one line each."""
+    out = [f"{a['decision']}: {a['node']} -> {a['target']}: {a['proposal']}"
+           for a in stood["answered"] if a["decision"] in (unsup.ACCEPTED, unsup.REJECTED)]
+    out += [f"accepted under the delegation: {d['node']}" for d in stood["delegated"]
+            if d.get("action") == "accepted"]
+    return out
+
+
+def _emit(out, event: dict) -> None:
+    out.write(json.dumps(event, ensure_ascii=False) + "\n")
+    out.flush()
+
+
+def run(root: str, task: str, prompt: str, max_rounds: int = iteration.MAX_ROUNDS, *,
+        out=None, start=session, check_floor=floor, check_goal=goal,
+        command=None, unsupervised: bool = False, stand_in_h=stand_in) -> str:
+    """The rounds. Returns how the run ended: done | asking | blocked | stalled |
+    error | unchecked | limit (engine/iteration.py). Unsupervised, H' stands in
+    for H after every measured round (stand_in_h), before the goal is checked."""
+    out = out or sys.stdout
+    mode = "unsupervised" if unsupervised else "on"
+    review: list[str] = []         # what H' decided in H's place, over the whole run
+    if command is None:
+        from agent import codex_cli
+        command = codex_cli.command
+    argv, env = command("intent", json_events=True)
+    text, thread, round_no = prompt, None, 1
+    named: list[str] = []          # the gaps H' named last round, for its memory
+    while True:
+        info = start(argv, text, env, out)
+        thread = info["thread"] or thread
+        claimed, why = iteration.claim(info["message"])
+        fl = gl = None
+        stood: dict = {"answered": [], "delegated": []}
+        rework: list[dict] = []
+        step = iteration.stop_early(round_no, failed=info["failed"],
+                                    worked=info["worked"] > 0)
+        if step is None:
+            # BLOCKED too: E measures, and on a green floor H' checks the goal.
+            # Run 12 said BLOCKED over 561 green tests and six questions for H --
+            # it was waiting, not blocked, and the record should say so.
+            fl = check_floor(root)
+            requests = fl.get("requests") or []
+            if unsupervised:
+                stood = stand_in_h(root, task)
+                review += _review_lines(stood)
+                # every request was put to H'; what is still open is what it left
+                requests = [f"{a['node']} -> {a['target']}: {a['proposal']}"
+                            for a in stood["answered"] if a["decision"] == unsup.LEFT]
+                rework = unsup.rework(stood["answered"], claimed)
+            gl = check_goal(root, task, fl, named) if fl["green"] and not rework else None
+            step = iteration.decide(round_no, max_rounds, claimed=claimed,
+                                    floor_green=fl["green"], goal=gl,
+                                    requests=requests, why=why, rework=rework)
+        gaps = (gl or {}).get("gaps") or []
+        named = gaps if gl and "unavailable" not in gl else named
+        _emit(out, {"type": "sge.round", "round": round_no, "claim": claimed,
+                    "claim_why": why, "worked": info["worked"],
+                    "floor": None if fl is None else ("green" if fl["green"] else "red"),
+                    "failures": iteration.failures(fl) if fl else [],
+                    "gaps": gaps, "waiting": (gl or {}).get("waiting") or [],
+                    "closed": (gl or {}).get("closed") or [],
+                    "goal_unavailable": (gl or {}).get("unavailable"),
+                    "requests": (fl or {}).get("requests") or [],
+                    "decided": stood["answered"],
+                    "delegated": [d["node"] for d in stood["delegated"]
+                                  if d.get("action") == "accepted"],
+                    "next": step["next"], "outcome": step["outcome"], "why": step["why"]})
+        lifecycle.log_autonomy(root, {"actor": "E", "action": "round", "mode": mode,
+                                      "round": round_no,
+                                      "claim": claimed, "floor": None if fl is None
+                                      else fl["green"], "gaps": len(gaps),
+                                      "next": step["next"], "outcome": step["outcome"]})
+        if step["next"] == "stop":
+            _emit(out, {"type": "sge.run", "outcome": step["outcome"], "rounds": round_no,
+                        "why": step["why"], "thread": thread,
+                        **({"mode": mode, "review": review} if unsupervised else {})})
+            return step["outcome"]
+        round_no += 1
+        text = iteration.resume_prompt(round_no, max_rounds, fl, gl, stood["answered"])
+        argv, env = command("intent", json_events=True, resume=thread)
+
+
+# ---- the record of a run, in the project ----------------------------------------
+
+RUNS = Path(".sge") / "runs"
+
+
+def next_run(root: str | Path) -> Path:
+    """<root>/.sge/runs/NN -- the stem of the next run's record (NN from 01)."""
+    runs = Path(root) / RUNS
+    runs.mkdir(parents=True, exist_ok=True)
+    taken = [int(p.stem) for p in runs.glob("*.jsonl") if p.stem.isdigit()]
+    return runs / f"{max(taken, default=0) + 1:02d}"
+
+
+def roles_text(mode: str, max_rounds: int, task: str) -> str:
+    """Who played which role -- model and endpoint, never a key -- and how the run
+    was set up. Next to the stream, because a record without it cannot be
+    compared with the next one."""
+    from agent import codex_cli, llm
+    try:
+        commit = subprocess.run(["git", "-C", str(HERE), "rev-parse", "--short", "HEAD"],
+                                capture_output=True, text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        commit = ""
+    lines = [f"mode={mode}  max_rounds={max_rounds}  task={task}  "
+             f"engine={commit or 'unknown'}"]
+    for role in llm.ROLES:
+        runner = "codex exec" if role in codex_cli.AGENT_ROLES else "chat call"
+        lines.append(f"{role:9} {runner:10} {llm.describe(role)}   "
+                     f"key: {llm.endpoint(role)['key_from']}")
+    return "\n".join(lines) + "\n"
+
+
+class Record:
+    """The stream a run writes, three ways at once: to `out` (raw events, or with
+    `readable` the rendered lines), and into the project's record -- NN.jsonl as
+    it came, NN.log rendered. One writer, so the log and the window can never say
+    different things."""
+
+    def __init__(self, stem: Path, out, readable: bool = False):
+        self._out, self._readable, self._buf = out, readable, ""
+        self._jsonl = open(stem.with_suffix(".jsonl"), "a", encoding="utf-8")
+        self._log = open(stem.with_suffix(".log"), "a", encoding="utf-8")
+
+    def write(self, text: str) -> None:
+        self._buf += text
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            self._line(line)
+
+    def _line(self, line: str) -> None:
+        self._jsonl.write(line + "\n")
+        try:
+            shown = runlog.lines(json.loads(line))
+        except ValueError:
+            shown = [line]            # not an event: kept as it is
+        shown = shown if shown is not None else [line]
+        for text in shown:
+            self._log.write(text + "\n")
+        if self._readable:
+            for text in shown:
+                self._out.write(text + "\n")
+        else:
+            self._out.write(line + "\n")
+
+    def flush(self) -> None:
+        for f in (self._jsonl, self._log, self._out):
+            f.flush()
+
+    def close(self) -> None:
+        if self._buf:
+            self._line(self._buf)
+            self._buf = ""
+        self.flush()
+        self._jsonl.close()
+        self._log.close()
+
+
+def after(root: str) -> list[str]:
+    """What E and H' do once a run is over, whatever its outcome: record the tests
+    of the final state (what "migrated" is checked against), let H' decide what
+    the delegation lets it, and have H' brief every pending HARD change without a
+    fresh brief. One line per step; never an exception -- an unreachable H' only
+    leaves the homework undone."""
+    import cli
+    out = []
+    for name, step in (("test", cli.cmd_test), ("decide", cli.cmd_decide),
+                       ("prepare", cli.cmd_prepare)):
+        if name == "decide" and not autonomy.delegated(root):
+            out.append("decide    the delegation is off: pending HARD changes are H's")
+            continue
+        said = io.StringIO()
+        try:
+            with redirect_stdout(said), redirect_stderr(said):
+                step(root)
+        except Exception as exc:  # noqa: BLE001 -- the run is over; say it, do not die
+            said.write(f"failed: {exc}")
+        lines = [ln.strip() for ln in said.getvalue().splitlines() if ln.strip()]
+        out += [f"{name:9} {ln}" for ln in lines[-6:]] or [f"{name:9} (nothing to say)"]
+    return out
+
+
+def _load_env() -> None:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv(HERE / ".env")   # a value already in the environment wins
+    except ImportError:  # pragma: no cover
+        pass
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(prog="orchestrate", description=__doc__.split("\n")[0])
+    p.add_argument("root", help="the spec root the run grows")
+    p.add_argument("prompt", help="the first round's prompt")
+    p.add_argument("--task", required=True, help="TASK.md: the goal H' checks against")
+    p.add_argument("--max-rounds", type=int, default=iteration.MAX_ROUNDS)
+    p.add_argument("--unsupervised", action="store_true",
+                   help="H' answers decision requests between rounds, in H's place "
+                        "(needs the delegation on)")
+    p.add_argument("--readable", action="store_true",
+                   help="print the rendered lines instead of the raw events (a terminal)")
+    args = p.parse_args(argv)
+    if args.max_rounds < 1:
+        p.error("--max-rounds must be at least 1")
+    _load_env()
+    task = Path(args.task).read_text(encoding="utf-8")
+    root = os.path.abspath(args.root)
+    if args.unsupervised and not autonomy.delegated(root):
+        print("an unsupervised run needs the delegation on: `cli.py delegate ROOT on` "
+              "(H's act)", file=sys.stderr)
+        return 2
+    mode = "unsupervised" if args.unsupervised else "on"
+    stem = next_run(root)
+    stem.with_suffix(".roles").write_text(roles_text(mode, args.max_rounds, args.task),
+                                          encoding="utf-8")
+    record = Record(stem, sys.stdout, readable=args.readable)
+    try:
+        outcome = run(root, task, args.prompt, args.max_rounds, out=record,
+                      unsupervised=args.unsupervised)
+    except RuntimeError as exc:
+        print(f"intent unavailable: {exc}", file=sys.stderr)
+        record.close()
+        return 2
+    except OSError as exc:
+        print(f"intent could not start: {exc}", file=sys.stderr)
+        record.close()
+        return 2
+    _emit(record, {"type": "sge.after", "lines": after(root)})
+    record.close()
+    return 0 if outcome == "done" else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

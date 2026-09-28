@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+# a backup of .env holds the same keys (a trailing comment would be part of the pattern)
+.env.bak-*
+config.json
+cockpit.json
+project.index.json
