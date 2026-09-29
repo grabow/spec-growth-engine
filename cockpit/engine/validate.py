@@ -18,6 +18,7 @@ def run(nodes: dict[str, dict], root: str | None = None) -> str:
     if root is not None:
         for rel, msg in parser.invalid_specs(root):
             errors.append(f"invalid YAML in {rel}: {msg}")
+        errors += parser.unloaded_specs(root)
 
     for nid, n in nodes.items():
         parent = n.get("parent")

@@ -51,6 +51,34 @@ def load_architecture(root: str | Path) -> str:
     return arch.read_text(encoding="utf-8") if arch.exists() else ""
 
 
+def unloaded_specs(root: str | Path) -> list[str]:
+    """SPEC.md files that parse but do not become a node, one line each: one
+    with no `id` (load_nodes skips it) and one whose `id` another SPEC.md
+    already has (the later replaces the earlier in the graph). Both vanished
+    without a word -- the code they claim then looks orphaned, and the real
+    cause was nowhere -- so validate and drift report them as HARD errors, like
+    a file that does not parse (invalid_specs)."""
+    root = Path(root)
+    out: list[str] = []
+    first: dict[str, str] = {}
+    for spec in sorted(root.rglob(SPEC_NAME)):
+        try:
+            meta = frontmatter.load(spec).metadata
+        except Exception:
+            continue                      # invalid_specs reports those
+        rel = str(spec.relative_to(root)) if spec.is_relative_to(root) else str(spec)
+        nid = meta.get("id")
+        if not nid:
+            out.append(f"SPEC.md without id: {rel} -- it is no node, and whatever it "
+                       "claims is unowned")
+        elif nid in first:
+            out.append(f"duplicate id '{nid}': {first[nid]} and {rel} -- the graph "
+                       "holds only one of them")
+        else:
+            first[nid] = rel
+    return out
+
+
 def invalid_specs(root: str | Path) -> list[tuple[str, str]]:
     """Find SPEC.md files whose YAML frontmatter does not parse.
 

@@ -275,6 +275,37 @@ verdict:
   unchecked  green, and H' cannot be reached
 ```
 
+**Asked after, not before.** Where H is present, H is asked first: in the
+cockpit, Save asks before a HARD change is written, and the draft gate reviews a
+draft before it is saved -- all of it before any code. A run is unattended by
+definition, so it cannot ask at the moment a question comes up, and it goes on
+credit instead: a HARD change stays pending against the accepted state (§4) and
+keeps its nodes from `verified`; a decision request is recorded, and the work
+rests on its proposal (SPEC-GROWTH-ENGINE.md 3.10a). H decides at the end:
+
+```text
+                   asked before the code            asked after it (a run)
+                   -------------------------------  ---------------------------------
+H approves         H waited; the run stood still    nothing lost
+H rejects          no code was built in vain        the work built on it is taken
+                                                    back -- the gate holds it until
+                                                    then, the change set shows what
+H has to be        there, during the run            there at the end
+```
+
+Considered, and not built: a run that asks EARLY -- C refusing to implement a
+node whose spec rests on an open request or an unaccepted HARD change, so that
+the run ends `asking` before the code. It would make H the clock of the run,
+which is what working in the cockpit already is: whoever wants to be asked
+before the code works there. And the expensive case does not need it -- a
+decision that would invalidate much work is one H can see coming, and what H
+wants decided before any code, H decides before the run: in TASK.md (what must
+always be true, what is out of scope) or as an invariant or ADR in
+ARCHITECTURE.md. What is still open when the run starts is what nobody foresaw,
+and asking about it afterwards costs, at worst, the work built on one proposal.
+Unsupervised is the third way: H′ answers between rounds, H reviews afterwards
+(below).
+
 A run breaks the rule that *agents author no intent*, for node-level intent
 only; GOVERNANCE §6 states the exception and its bounds. It is an operating mode,
 not a value anyone sets on a slider or in `.sge/autonomy.json`.

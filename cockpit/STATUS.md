@@ -52,7 +52,8 @@ uv run pytest -q             # the test count lives here, not in this file
 
 ```text
 engine/            deterministic, authors no intent
-  parser.py        load SPEC.md + ARCHITECTURE.md; skip (and report) invalid YAML
+  parser.py        load SPEC.md + ARCHITECTURE.md; skip (and report) invalid YAML,
+                   a SPEC.md with no id and a duplicate id -- none vanishes in silence
   graph.py         ownership tree (parent) + dependency DAG (depends_on) + Spine + cycles
   context.py       Context(N): ARCHITECTURE + ancestor contracts (SHORT) + target (FULL)
                    + own code + dependency contracts

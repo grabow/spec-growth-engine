@@ -451,7 +451,8 @@ The blocking gate is real and offline (no API key, deterministic):
       import. The fix lands in the SAME commit; no drift reaches history.
 
 Today the gate covers: structure (orphan parent, ownership-line dep, undeclared/
-missing-contract dep, cycles, invalid YAML) + code drift (undeclared cross-owner
+missing-contract dep, cycles, invalid YAML, a SPEC.md with no id or a
+duplicate one) + code drift (undeclared cross-owner
 import, ownership conflict, orphan source file) + STATUS LIFECYCLE + HARD
 changes against the accepted state (held as pending; on PASS, SOFT is accepted).
 capability `duplicates` is advisory (never blocks).

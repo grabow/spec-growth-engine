@@ -38,6 +38,7 @@ def run(nodes: dict[str, dict], project_root: str) -> str:
     # not applied, so their files would look like orphans). Surface the real cause.
     for rel, msg in parser.invalid_specs(project_root):
         errors.append(f"invalid YAML in {rel}: {msg}")
+    errors += parser.unloaded_specs(project_root)       # no id, or a duplicate one
 
     # A `code` glob must never claim the GRAPH ITSELF as its realization. This is
     # what makes `code: ["**"]` detectable: a glob broad enough to swallow the

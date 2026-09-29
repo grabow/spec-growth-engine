@@ -185,6 +185,27 @@ reaches. What H' judges differs too: at D1 and D2 the QUALITY of a draft (what,
 not how; testable criteria; reuse), under the delegation whether a broken
 promise has been MIGRATED.
 
+**Asked before in the cockpit, after in a run.** In the cockpit you are asked
+first: Save asks before a HARD change is written, and D1/D2 review a draft
+before it is saved -- all of it before any code. A run is unattended, so it
+cannot ask at the moment a question comes up; it goes on credit, and you decide
+at the end:
+
+```text
+                asked before the code            asked after it (a run)
+--------------  -------------------------------  ---------------------------------
+you approve     you waited; the run stood still  nothing lost
+you reject      no code was built in vain        the work built on it is taken
+                                                 back -- the gate holds it until
+                                                 then, the change set shows what
+you have to be  there, during the run            there at the end
+```
+
+A run that asks early is not offered, on purpose: it would make you the run's
+clock, and that is what working in the cockpit already is. What you want decided
+before any code, decide before the run -- in TASK.md, or as an invariant or ADR
+in ARCHITECTURE.md (AUTONOMY.md, "Asked after, not before").
+
 **And a row the table cannot show, because it needs nothing:** write the SPEC.md
 files yourself, in an editor or with Load Spec, and the whole first layer still
 works -- the gate, drift, test evidence, the change set, the accepted state, a
@@ -689,7 +710,10 @@ removed, dependents = nodes.delete_node("api.discount", n)       # recursive=Tru
    node never silently vanishes from the tree; files it cannot auto-fix are reported
    as broken/hidden. See `specfix.py`. The parser and the CLI **gate stay strict** --
    they BLOCK on invalid YAML (no silent drift into a commit); healing is an
-   authoring-time convenience in the cockpit only.
+   authoring-time convenience in the cockpit only. They block, too, on a SPEC.md
+   that parses but is no node -- one with no `id`, or an `id` another SPEC.md
+   already has: either would drop out of the graph without a word, and the code
+   it claims would look orphaned with the cause nowhere.
    Before writing, Save computes the **change set** (`engine/changeset.py`): which
    gate the change falls under and why, which nodes `depends_on` this one, which of
    them mention a removed operation, and which evidence was recorded against the
