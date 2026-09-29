@@ -19,7 +19,11 @@ TK_UNAVAILABLE = 77
 
 @pytest.mark.parametrize("scenario", ["run_window", "run_locks_the_writers",
                                       "run_dialog_modes", "run_window_unsupervised",
-                                      "new_project_scrolls"])
+                                      "new_project_scrolls", "new_project_suggests_a_goal",
+                                      "edit_goal_with_p",
+                                      "new_project_over_a_floor_keeps_the_dialog",
+                                      "open_target_prepares_the_revise",
+                                      "picking_a_target_loads_its_spec"])
 def test_run_window(scenario):
     env = dict(os.environ, PYTHONPATH=str(COCKPIT))
     try:

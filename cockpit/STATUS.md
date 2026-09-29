@@ -122,13 +122,16 @@ groundwork.py      lay the floor of a NEW project: root, container + manifest fr
                    archetype, the invariants (four defaults + four questions), the
                    accepted state, the two manuals rendered for this project's paths,
                    and -- when a run is intended -- TASK.md from the method's template
-                   (spec-growth-engine/TASK.template.md) and three answers. It records
+                   (spec-growth-engine/TASK.template.md) and three answers -- which P
+                   can expand into a fuller goal on request (suggest_goal; the person
+                   edits and confirms it, also later: Edit Goal). It records
                    the answers (.sge/groundwork.json), so like() lays the same floor
                    in another directory. plan() shows, apply() writes; P only WORDS
 orchestrate.py     run I in rounds, in any project: a session, E's floor, the goal check by H', then stop
                    or `codex exec resume` the same session with what is missing;
                    --unsupervised has H' stand in for H between rounds (needs the
-                   delegation on); blockers() says what a run still needs
+                   delegation on); CoderWatch passes on what C is doing while I
+                   waits on it; blockers() says what a run still needs
 runlog.py          one readable line per event of a run's stream -- rendered once,
                    for the cockpit's Run window and the run's log (.sge/runs/NN.log)
 cli.py             headless gate: validate | drift | gate | init (lay a floor; --like OLD) |
@@ -158,8 +161,9 @@ GUI extras  Requests (n): H's inbox -- grant/reject waivers, accept/resolve/reje
             the delegation switch beside it (per project, on | off) · node graph window
             (zoom, collapse, dependency edges) · Codex window with status bar
             Run window: one line per round (claim, floor, gaps, what it asks H),
-            the cockpit re-reads the graph after every round, Draft and Revise
-            are locked while it writes, and the end says which outcome it was
+            the cockpit re-reads the graph after every round, Draft, Revise,
+            Save and the slider are locked while it writes, and the end says
+            which outcome it was
 CLI         uv run python cli.py {validate|drift|gate|pending|prepare|decide|test|duplicates|index|install-hook} [ROOT]
             uv run python cli.py accept ROOT ID... | --all [--by NAME]
             uv run python cli.py reject ROOT ID... --reason TEXT [--by NAME]

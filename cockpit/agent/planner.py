@@ -1,9 +1,10 @@
 """Planner agent (role P): natural language + examples -> SPEC.md draft.
 
-Uses OpenRouter (OpenAI-compatible API) with function calling for structured
-output. This authors intent, so its output is ALWAYS shown to the human for
-review before it becomes truth. The key is read from the environment / .env;
-never hardcode it (and never commit .env).
+Runs on the planner's own endpoint (SGE_PLANNER_* in cockpit/.env, an
+OpenAI-compatible API) with function calling for structured output. This
+authors intent, so its output is ALWAYS shown to the human for review before it
+becomes truth. The key is read from the environment / .env; never hardcode it
+(and never commit .env).
 """
 from __future__ import annotations
 
@@ -407,3 +408,77 @@ def one_line(prompt: str, model: str | None = None) -> str:
         raise RuntimeError(f"the provider refused: {exc}") from exc
     text = (resp.choices[0].message.content or "").strip()
     return text.splitlines()[0].strip().strip('"') if text else ""
+
+
+# ---- the goal of a run (TASK.md): P proposes, H decides -----------------------------
+
+_GOAL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "emit_goal",
+        "description": "Propose a fuller goal (TASK.md) for the person to edit.",
+        "parameters": {
+            "type": "object",
+            "required": ["must_do", "always", "out_of_scope"],
+            "properties": {
+                "must_do": {"type": "array", "items": {"type": "string"},
+                            "description": "one observable behaviour per line"},
+                "always": {"type": "array", "items": {"type": "string"},
+                           "description": "what holds across all behaviours"},
+                "out_of_scope": {"type": "array", "items": {"type": "string"},
+                                 "description": "what is deliberately not wanted"},
+            },
+        },
+    },
+}
+
+_GOAL_GUIDE = (
+    "You help a person state the GOAL of a software project (its TASK.md) before an "
+    "agent builds it. Another model will check the finished system against this goal, "
+    "statement by statement -- a statement it cannot check is worth nothing, and a "
+    "behaviour nobody wrote down will not be built, or will be built by guessing. The "
+    "person gave a few words. Propose a fuller goal. They will edit it and confirm it: "
+    "it stays THEIR goal.\n"
+    "- must_do: one line per behaviour a user can observe -- how it is started, what "
+    "the user does (commands, keys, inputs), what the system does in response, its "
+    "rules, how it ends, what it refuses. Concrete and checkable: numbers, keys, names, "
+    "limits.\n"
+    "- always: what holds across all behaviours -- above all that it can be TESTED "
+    "offline and without a screen (the logic runs apart from any user interface and "
+    "can be driven step by step), determinism (randomness from a seeded generator), "
+    "what persists, how errors behave.\n"
+    "- out_of_scope: what a reader might expect but is not wanted, so nobody grows it.\n"
+    "Rules: keep every statement the person wrote, in their words. Say WHAT, never HOW: "
+    "no components, modules, classes or files -- how it is built is not the goal. Where "
+    "the words leave a choice open that shapes the whole system (a terminal or a window, "
+    "a file or a database), choose the simplest one consistent with the architecture "
+    "and the stack below, and name it in the line, so the person sees the choice. Never "
+    "contradict an invariant of ARCHITECTURE.md. Keep it to what a first version needs, "
+    "not everything conceivable. Call emit_goal."
+)
+
+
+def propose_goal(purpose: str, must_do: str, always: str = "", out_of_scope: str = "",
+                 *, architecture: str = "", stack: str = "",
+                 model: str | None = None) -> dict | None:
+    """P's proposal for a fuller goal: {must_do, always, out_of_scope}, each a list
+    of lines -- or None for an answer without a usable proposal. Raises
+    RuntimeError when P is unavailable. It proposes; the person edits and decides
+    (groundwork.suggest_goal, the cockpit's goal fields)."""
+    from engine.assist import _items      # a list sent as a JSON string, as GLM does
+    client = _client("planner")
+    prompt = (
+        f"{_GOAL_GUIDE}\n\n"
+        f"WHAT IT IS:\n{purpose or '(not given)'}\n\n"
+        f"WHAT IT MUST DO, as the person wrote it:\n{must_do or '(nothing yet)'}\n\n"
+        f"WHAT MUST ALWAYS BE TRUE, as the person wrote it:\n{always or '(nothing yet)'}\n\n"
+        f"OUT OF SCOPE, as the person wrote it:\n{out_of_scope or '(nothing yet)'}\n\n"
+        f"ARCHITECTURE.md (invariants that hold everywhere):\n{architecture or '(none)'}\n\n"
+        f"THE STACK:\n{stack or '(not chosen)'}"
+    )
+    data, _ = _call_tool(client, _GOAL_TOOL, prompt, model=model or planner_model())
+    if not data:
+        return None
+    out = {key: [str(x).strip() for x in _items(data.get(key)) if str(x).strip()]
+           for key in ("must_do", "always", "out_of_scope")}
+    return out if out["must_do"] else None

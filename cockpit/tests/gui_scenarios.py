@@ -288,6 +288,10 @@ def run_window():
     ]
     c._open_run_window(_FakeRun([json.dumps(e) for e in events]), str(c.proj / "TASK.md"), 5)
     _check(str(c.draft_button.cget("state")) == "disabled", "Draft was not locked")
+    _check(str(c.save_button.cget("state")) == "disabled", "Save was not locked")
+    _check(c.autonomy_scale.instate(["disabled"]), "the slider stayed live during a run")
+    _check("a run drafts without it" in c.autonomy_label.cget("text"),
+           c.autonomy_label.cget("text"))
     for _ in range(400):          # the stream is read in a thread; give it turns
         if c._run is None:
             break
@@ -304,6 +308,8 @@ def run_window():
     _check("RUN       ASKING after 2 round(s)" in shown, shown)
     _check("RUN ASKING" in shown, "the window never said how it ended")
     _check(str(c.draft_button.cget("state")) == "normal", "Draft stayed locked")
+    _check(not c.autonomy_scale.instate(["disabled"]), "the slider stayed off after the run")
+    _check("(the draft gate)" in c.autonomy_label.cget("text"), c.autonomy_label.cget("text"))
     _check("Run ASKING" in c.guidance.get("1.0", "end"), c.guidance.get("1.0", "end"))
     _check(any(w.title().startswith("Requests awaiting") for w in windows),
            "asking did not open the Requests window")
@@ -427,6 +433,159 @@ def new_project_scrolls():
     d._cancel()
 
 
+class _InlineThread:
+    """A thread that runs where it is started: the scenarios drive Tk by hand,
+    with no mainloop for a background thread to hand its result back to."""
+    def __init__(self, target=None, args=(), daemon=None):
+        self._call, self._args = target, args
+
+    def start(self):
+        self._call(*self._args)
+
+
+class _ProposingPlanner:
+    def propose_goal(self, purpose, must_do, always, out_of_scope, **kw):
+        return {"must_do": [must_do or "x", "arrow keys move the paddle"],
+                "always": ["the logic runs without a window"], "out_of_scope": ["sound"]}
+
+
+def new_project_suggests_a_goal():
+    """In the New Project dialog, P turns a few words into a fuller goal -- in the
+    fields, for the person to edit; nothing is written."""
+    import types
+    import app
+    c = _cockpit()
+    app.GroundworkDialog.grab_set = lambda self: None
+    app.threading = types.SimpleNamespace(Thread=_InlineThread)
+    d = app.GroundworkDialog(c, str(c.proj))
+    d._planner = _ProposingPlanner()
+    d.wants_run.set(True)
+    d._toggle_goal()
+    d.goal["behaviours"].insert("1.0", "A pong game against a bot.")
+    d._suggest_goal()
+    _settle(d)
+    said = d.goal["behaviours"].get("1.0", "end")
+    _check("A pong game against a bot." in said and "arrow keys move the paddle" in said, said)
+    _check("the logic runs without a window" in d.goal["always"].get("1.0", "end"), "always")
+    _check("It is your goal" in d.suggest_status.cget("text"), d.suggest_status.cget("text"))
+    _check(not (c.proj / "TASK.md").exists(), "a suggestion wrote TASK.md")
+    d._cancel()
+
+
+def new_project_over_a_floor_keeps_the_dialog():
+    """A floor is laid once. Over an existing one the dialog says so -- and
+    stays open, so what was typed, and what P proposed, is not lost -- and it
+    names the way to change the goal of a project that exists."""
+    import app
+    c = _cockpit()
+    app.GroundworkDialog.grab_set = lambda self: None
+    said = []
+    app.messagebox.showerror = lambda title, msg, **k: said.append(msg)
+    d = app.GroundworkDialog(c, str(c.proj))          # c.proj has a root already
+    d.wants_run.set(True)
+    d._toggle_goal()
+    d.goal["behaviours"].insert("1.0", "A pong game against a bot.")
+    d._ok()
+    _check(d.result is None, "a floor was offered over an existing one")
+    _check(said and "already holds a root node" in said[0], str(said))
+    _check("Edit Goal (TASK.md)" in said[0], "the way to change the goal is not named")
+    _check(d.winfo_exists(), "the dialog closed and took the input with it")
+    _check("A pong game" in d.goal["behaviours"].get("1.0", "end"), "the input is gone")
+    d._cancel()
+
+
+def open_target_prepares_the_revise():
+    """A decision request for a node: Open target loads that node's spec and puts
+    the change into the Intent box, so Revise can apply it -- nothing to copy --
+    and the main window has a Save for what Revise produces."""
+    c = _cockpit()
+    gui = c.proj / "gui" / "SPEC.md"
+    gui.write_text(gui.read_text().replace(
+        "status: implemented",
+        "decision_requests:\n  - {target: svc, proposal: 'svc offers a graphical interface.', "
+        "reason: the task asks for one}\nstatus: implemented"), encoding="utf-8")
+    c.reload_nodes()
+    tree, buttons = _window(c)
+    item = next(i for i in tree.get_children() if "svc.gui" in str(tree.item(i, "values"))
+                and "decision" in str(tree.item(i, "values")).lower())
+    tree.selection_set(item)
+    _settle(c)
+    buttons["Open target"].invoke()
+    _settle(c)
+    prepared = c.input.get("1.0", "end")
+    _check("Apply this decision, requested by svc.gui: svc offers a graphical interface."
+           in prepared, prepared)
+    said = c.guidance.get("1.0", "end")
+    _check("Revise ->" in said and "Resolved" in said, said)
+    _check(c.target.get() == "svc", c.target.get())
+    _check(str(c.save_button.cget("text")) == "Save", "no Save in the main window")
+
+
+def picking_a_target_loads_its_spec():
+    """The Target box works like a double-click in the graph: pick a node and its
+    SPEC.md is in the editor. A spec nobody saved is not thrown away unasked --
+    declined, the target goes back to the node the draft belongs to."""
+    import app
+    c = _cockpit()
+    gui = (c.proj / "gui" / "SPEC.md").read_text()
+    c.target.set("svc.gui")
+    c.target.event_generate("<<ComboboxSelected>>")
+    _settle(c)
+    _check(c.view.get("1.0", "end").strip() == gui.strip(), "svc.gui's spec was not loaded")
+
+    # the view is as on disk: nothing to lose, no question
+    asked = []
+    app.messagebox.askyesno = lambda *a, **k: asked.append(a) or False
+    c.target.set("svc")
+    c.target.event_generate("<<ComboboxSelected>>")
+    _settle(c)
+    _check(not asked, "asked although nothing was unsaved")
+    _check("id: svc\n" in c.view.get("1.0", "end"), "svc's spec was not loaded")
+
+    # an unsaved revision of svc; picking svc.gui asks, and No keeps it
+    draft = c.view.get("1.0", "end").strip().replace("purpose: x", "purpose: changed")
+    c._set(c.view, draft)
+    c.target.set("svc.gui")
+    c.target.event_generate("<<ComboboxSelected>>")
+    _settle(c)
+    _check(len(asked) == 1, f"asked {len(asked)} time(s)")
+    _check(c.view.get("1.0", "end").strip() == draft, "the unsaved spec was discarded")
+    _check(c.target.get() == "svc", f"the target stayed {c.target.get()}")
+
+    # Yes discards it and loads the pick
+    app.messagebox.askyesno = lambda *a, **k: True
+    c.target.set("svc.gui")
+    c.target.event_generate("<<ComboboxSelected>>")
+    _settle(c)
+    _check(c.view.get("1.0", "end").strip() == gui.strip(), "svc.gui's spec was not loaded")
+
+
+def edit_goal_with_p():
+    """For a project that exists: TASK.md in an editor, P's proposal in its place,
+    written only by Save."""
+    import types
+    import app
+    c = _cockpit()
+    app.threading = types.SimpleNamespace(Thread=_InlineThread)
+    app.llm.missing = lambda role: []
+    app.planner.propose_goal = _ProposingPlanner().propose_goal
+    task = c.proj / "TASK.md"
+    task.write_text("# Task\n\na game like pong\n\n## What it must do\n\n"
+                    "- A pong game against a bot.\n", encoding="utf-8")
+    c.edit_goal()
+    _settle(c)
+    win = [w for w in c.winfo_children() if isinstance(w, tk.Toplevel)
+           and w.title().startswith("Goal - ")][-1]
+    win._suggest()
+    _settle(c)
+    text = win._editor.get("1.0", "end")
+    _check("arrow keys move the paddle" in text and "A pong game against a bot." in text, text)
+    _check("## Done means" in text, "the method's standard went missing")
+    _check("arrow keys" not in task.read_text(encoding="utf-8"), "saved before Save")
+    win._save()
+    _check("arrow keys move the paddle" in task.read_text(encoding="utf-8"), "not saved")
+
+
 def _walk(w):
     yield w
     for ch in w.winfo_children():
@@ -437,7 +596,11 @@ SCENARIOS = {f.__name__: f for f in (badge, validate, grant, invalid_grant, stal
                                      hard_accept, hard_reject,
                                      run_window, run_locks_the_writers,
                                      run_dialog_modes, run_window_unsupervised,
-                                     new_project_scrolls)}
+                                     new_project_scrolls, new_project_suggests_a_goal,
+                                     edit_goal_with_p,
+                                     new_project_over_a_floor_keeps_the_dialog,
+                                     open_target_prepares_the_revise,
+                                     picking_a_target_loads_its_spec)}
 
 if __name__ == "__main__":
     SCENARIOS[sys.argv[1]]()

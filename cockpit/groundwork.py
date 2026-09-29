@@ -27,7 +27,9 @@ from the same place, in a new directory, instead of resetting the first.
 
 The only place in the tool where a model writes into a layer-1 artefact, and it
 does so ONLY through an answer a person gave and confirmed. If that ever stops
-being true, this file is where the boundary moved.
+being true, this file is where the boundary moved. The same holds for the goal:
+P may propose a fuller TASK.md from the person's few words (`suggest_goal`), and
+the person edits and confirms it -- it is still theirs.
 """
 from __future__ import annotations
 
@@ -203,7 +205,8 @@ def refuses(root: str | Path) -> str | None:
         try:
             import frontmatter
             if frontmatter.load(spec).metadata.get("id"):
-                return f"{spec} already holds a root node -- this project has a floor"
+                return (f"{spec} already holds a root node -- this project has a floor. "
+                        "To change its goal, open it and use Build > Edit Goal (TASK.md)...")
         except Exception:
             return f"{spec} exists and could not be read; move it aside first"
     arch = path / "ARCHITECTURE.md"
@@ -318,6 +321,46 @@ def _bullets(text: str) -> str:
     not reworded here -- TASK.md is prose, and prose is theirs (3.12)."""
     lines = [ln.strip().lstrip("-*").strip() for ln in (text or "").splitlines()]
     return "\n".join(f"- {ln}" for ln in lines if ln)
+
+
+def goal_of(text: str) -> dict:
+    """The person's part of a TASK.md, read back: {purpose, behaviours, always,
+    out_of_scope}, each as the lines it holds (the bullets without their dash).
+    The method's part -- "Done means", "Deliberately not specified" -- is not
+    theirs, and not returned."""
+    purpose, sections, current = [], {}, None
+    for line in text.splitlines():
+        if line.startswith("## "):
+            current = line[3:].strip().lower()
+            sections[current] = []
+        elif line.startswith("# "):
+            current = None
+        elif current is None:
+            if line.strip():
+                purpose.append(line.strip())
+        elif line.strip():
+            sections[current].append(line.strip()[2:].strip() if line.strip().startswith(
+                ("- ", "* ")) else line.strip())
+    pick = lambda name: "\n".join(sections.get(name, []))
+    return {"purpose": " ".join(purpose), "behaviours": pick("what it must do"),
+            "always": pick("what must always be true"), "out_of_scope": pick("out of scope")}
+
+
+def suggest_goal(purpose: str, behaviours: str, always: str, out_of_scope: str, planner,
+                 architecture: str = "", stack: str = "") -> dict | None:
+    """P proposes a fuller goal from what the person wrote; {behaviours, always,
+    out_of_scope} as text, one line each -- for the person to edit and confirm.
+    Proposes, never writes: TASK.md is H's prose (3.12). None for an unusable
+    answer; RuntimeError when P is unavailable, for the caller to say."""
+    if (behaviours or "").strip() == "- TODO":
+        behaviours = ""
+    proposed = planner.propose_goal(purpose, behaviours, always, out_of_scope,
+                                    architecture=architecture, stack=stack)
+    if not proposed:
+        return None
+    return {"behaviours": "\n".join(proposed["must_do"]),
+            "always": "\n".join(proposed["always"]),
+            "out_of_scope": "\n".join(proposed["out_of_scope"])}
 
 
 def task_text(action: WriteTask) -> str:

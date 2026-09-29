@@ -18,10 +18,11 @@ records the tests and runs the gate) and, on a green floor, H' checks the goal
 I resumes the SAME session -- `codex exec resume`, with its memory of the run --
 told what is missing, or the run stops, and why.
 
-stdout is the run's event stream: codex's own events, one `sge.round` event
-after every round, one `sge.run` event at the end, and one `sge.after` for what
-E and H' did once it was over (runlog.py renders them) -- or, with --readable,
-those lines already rendered. Every run is recorded in <ROOT>/.sge/runs/:
+stdout is the run's event stream: codex's own events, `sge.coder` for what C is
+doing while I waits on it (CoderWatch), one `sge.round` event after every round,
+one `sge.run` event at the end, and one `sge.after` for what E and H' did once
+it was over (runlog.py renders them) -- or, with --readable, those lines already
+rendered. Every run is recorded in <ROOT>/.sge/runs/:
 
   NN.jsonl   the event stream, as it came
   NN.log     one readable line per event (runlog.py) -- follow it with tail -f
@@ -48,6 +49,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -220,13 +223,91 @@ def _emit(out, event: dict) -> None:
     out.flush()
 
 
+class _Serialized:
+    """One writer for two threads -- the session's events and CoderWatch's --
+    so that no line of one lands inside a line of the other."""
+
+    def __init__(self, out):
+        self._out, self._lock = out, threading.Lock()
+
+    def write(self, text: str) -> None:
+        with self._lock:
+            self._out.write(text)
+
+    def flush(self) -> None:
+        with self._lock:
+            self._out.flush()
+
+
+class CoderWatch:
+    """What C is doing, while I waits on it.
+
+    I starts C with `cli.py code`, which can take minutes; C writes to its own
+    log (<root>/.sge/code/<node>-<time>.log), and I's stream says nothing until C
+    is done -- a working run looked like a stalled one. So while a session runs,
+    this watches those logs: every `interval` seconds, for each log written to
+    since the session began, the last new line is emitted as `sge.coder`. The
+    watching happens here, once; every reader of the stream -- the cockpit's Run
+    window, `cli.py run`, the run's own log -- gets it without polling itself.
+    Throttled on purpose: one line per log per interval; C's full output stays in
+    its log."""
+
+    def __init__(self, root: str | Path, out, interval: float = 2.0):
+        self.root, self.out, self.interval = Path(root), out, interval
+        self._dir = self.root / ".sge" / "code"
+        self._since = time.time()
+        self._offsets: dict[Path, int] = {}
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop watching -- after one last look, so C's final line is not lost."""
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=self.interval + 5)
+        self.poll()
+
+    def _loop(self) -> None:
+        while not self._stop.wait(self.interval):
+            self.poll()
+
+    def poll(self) -> None:
+        try:
+            logs = sorted((p for p in self._dir.glob("*.log")
+                           if p.stat().st_mtime >= self._since - 1),
+                          key=lambda p: p.stat().st_mtime)
+        except OSError:
+            return
+        for path in logs:
+            start = self._offsets.get(path, 0)
+            try:
+                with open(path, "rb") as f:
+                    f.seek(start)
+                    new = f.read()
+            except OSError:
+                continue
+            if not new:
+                continue
+            self._offsets[path] = start + len(new)
+            lines = [ln.strip() for ln in new.decode("utf-8", "replace").splitlines()
+                     if ln.strip()]
+            if lines:
+                _emit(self.out, {"type": "sge.coder", "node": path.stem.rsplit("-", 1)[0],
+                                 "line": lines[-1],
+                                 "log": str(path.relative_to(self.root))})
+
+
 def run(root: str, task: str, prompt: str, max_rounds: int = iteration.MAX_ROUNDS, *,
         out=None, start=session, check_floor=floor, check_goal=goal,
-        command=None, unsupervised: bool = False, stand_in_h=stand_in) -> str:
+        command=None, unsupervised: bool = False, stand_in_h=stand_in,
+        watch=CoderWatch) -> str:
     """The rounds. Returns how the run ended: done | asking | blocked | stalled |
     error | unchecked | limit (engine/iteration.py). Unsupervised, H' stands in
     for H after every measured round (stand_in_h), before the goal is checked."""
-    out = out or sys.stdout
+    out = _Serialized(out or sys.stdout)
     mode = "unsupervised" if unsupervised else "on"
     review: list[str] = []         # what H' decided in H's place, over the whole run
     if command is None:
@@ -236,7 +317,14 @@ def run(root: str, task: str, prompt: str, max_rounds: int = iteration.MAX_ROUND
     text, thread, round_no = prompt, None, 1
     named: list[str] = []          # the gaps H' named last round, for its memory
     while True:
-        info = start(argv, text, env, out)
+        watching = watch(root, out) if watch else None
+        if watching:
+            watching.start()
+        try:
+            info = start(argv, text, env, out)
+        finally:
+            if watching:
+                watching.stop()
         thread = info["thread"] or thread
         claimed, why = iteration.claim(info["message"])
         fl = gl = None

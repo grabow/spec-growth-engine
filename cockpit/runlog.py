@@ -10,9 +10,9 @@ lives here, once.
 stream is mostly deltas -- or None when the event is not part of a run's stream
 at all (it is then recorded as it came).
 
-The events are codex's own (thread / turn / item) plus the run's own `sge.round`,
-`sge.run` and `sge.after`, which engine/iteration.py decides and orchestrate.py
-emits.
+The events are codex's own (thread / turn / item) plus the run's own
+`sge.coder` (what C is doing while I waits), `sge.round`, `sge.run` and
+`sge.after`, which engine/iteration.py decides and orchestrate.py emits.
 """
 from __future__ import annotations
 
@@ -41,6 +41,8 @@ def _rounds(ev: dict) -> list[str] | None:
                 for a in ev.get("decided") or []]
         out += [f"H' accepted {first(nid)} (delegation)" for nid in ev.get("delegated") or []]
         return out
+    if kind == "sge.coder":
+        return [f"C {first(ev.get('node', ''), 12):<12} {first(ev.get('line', ''), 110)}"]
     if kind == "sge.after":
         return [f"after     {first(line, 120)}" for line in ev.get("lines") or []]
     if kind == "sge.run":

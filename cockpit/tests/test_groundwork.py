@@ -294,3 +294,62 @@ def test_a_floor_laid_like_another_is_the_same_floor(tmp_path):
 def test_like_refuses_a_project_laid_by_hand(tmp_path):
     with pytest.raises(ValueError, match="records no answers"):
         groundwork.like(tmp_path)
+
+
+# ---- P proposes a fuller goal; the person decides -------------------------------
+
+def test_the_goal_is_read_back_from_a_task(tmp_path):
+    text = groundwork.task_text(groundwork.WriteTask(
+        "read add URL\nread list", "the list survives a restart", "a GUI", "A reading list."))
+    goal = groundwork.goal_of(text)
+    assert goal == {"purpose": "A reading list.", "behaviours": "read add URL\nread list",
+                    "always": "the list survives a restart", "out_of_scope": "a GUI"}
+
+
+class _Planner:
+    """P, scripted: records what it was given, answers with a fixed proposal."""
+    def __init__(self, answer):
+        self.answer, self.seen = answer, []
+
+    def propose_goal(self, purpose, must_do, always, out_of_scope, **kw):
+        self.seen.append((purpose, must_do, always, out_of_scope, kw))
+        return self.answer
+
+
+def test_p_proposes_the_goal_as_lines_the_person_edits():
+    p = _Planner({"must_do": ["a", "b"], "always": ["c"], "out_of_scope": []})
+    out = groundwork.suggest_goal("pong", "- TODO", "", "", p,
+                                  architecture="- deterministic", stack="Python / uv")
+    assert out == {"behaviours": "a\nb", "always": "c", "out_of_scope": ""}
+    purpose, must_do, _always, _oos, kw = p.seen[0]
+    assert (purpose, must_do) == ("pong", "")           # the template's TODO is not a wish
+    assert kw == {"architecture": "- deterministic", "stack": "Python / uv"}
+    assert groundwork.suggest_goal("x", "y", "", "", _Planner(None)) is None
+
+
+def test_the_planner_keeps_the_persons_words_and_says_what_not_how(monkeypatch):
+    import json
+    from agent import planner
+    from tests.test_assist import _client_answering, _Resp
+    requests = []
+    answer = json.dumps({"must_do": ["`uv run pong` opens a window", "arrow keys move"],
+                         "always": ["logic runs without a window"], "out_of_scope": ["sound"]})
+    monkeypatch.setattr(planner, "_client", lambda *_: _client_answering(
+        _Resp(answer, "tool_calls"), requests=requests))
+    out = planner.propose_goal("a game like pong", "A pong game against a bot.",
+                               architecture="- Deterministic", stack="Python / uv")
+    assert out["must_do"][0] == "`uv run pong` opens a window"
+    prompt = requests[0]["messages"][0]["content"]
+    assert "keep every statement the person wrote" in prompt
+    assert "Say WHAT, never HOW" in prompt and "Never contradict an invariant" in prompt
+    assert "A pong game against a bot." in prompt and "- Deterministic" in prompt
+
+
+def test_a_proposal_without_a_behaviour_is_no_proposal(monkeypatch):
+    import json
+    from agent import planner
+    from tests.test_assist import _client_answering, _Resp
+    answer = json.dumps({"must_do": [], "always": ["x"], "out_of_scope": []})
+    monkeypatch.setattr(planner, "_client", lambda *_: _client_answering(
+        _Resp(answer, "tool_calls")))
+    assert planner.propose_goal("p", "m") is None

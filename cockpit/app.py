@@ -76,6 +76,18 @@ def _looks_like_spec(text: str) -> bool:
     head = t[:end] if end != -1 else t
     return any(line.strip().startswith("id:") for line in head.splitlines())
 
+
+def _spec_id(text: str) -> str:
+    """The `id:` of a SPEC.md's frontmatter; "" when the text is not a SPEC.md."""
+    if not _looks_like_spec(text):
+        return ""
+    t = text.lstrip()
+    end = t.find("\n---", 3)
+    for line in (t[:end] if end != -1 else t).splitlines():
+        if line.strip().startswith("id:"):
+            return line.strip()[3:].strip().strip("'\"")
+    return ""
+
 MONO = ("TkFixedFont", 12)
 
 
@@ -262,6 +274,8 @@ class Cockpit(tk.Tk):
         ttk.Label(row, text="Target node:").pack(side="left")
         self.target = ttk.Combobox(row, values=sorted(self.nodes), state="readonly")
         self.target.pack(side="left", fill="x", expand=True, padx=4)
+        # picking a node shows its SPEC.md, as a double-click in the graph does
+        self.target.bind("<<ComboboxSelected>>", lambda _e: self._target_picked())
         ttk.Button(row, text="Tree...", command=self.show_node_tree).pack(side="left")
         # The way back to agents: requests awaiting H. The count is on the button so
         # a pending decision is visible without pressing Validate and reading warnings.
@@ -286,6 +300,9 @@ class Cockpit(tk.Tk):
         self.draft_button.pack(side="left", padx=3)
         self.revise_button = ttk.Button(btns, text="Revise →", command=self.revise)
         self.revise_button.pack(side="left", padx=3)
+        # what Draft and Revise put into the editor is not saved until this is pressed
+        self.save_button = ttk.Button(btns, text="Save", command=self.save_spec)
+        self.save_button.pack(side="left", padx=(12, 3))
 
         # --- guidance pane (small: little text lives here) ---
         gf = ttk.Frame(left)
@@ -371,6 +388,7 @@ class Cockpit(tk.Tk):
         menu("Spec", [("Load Spec", self.load_spec), ("Save Spec", self.save_spec)])
         menu("Build", [("Build Context", self.build_ctx), ("Codex", self.run_agent),
                        ("Run Tests", self.run_tests_action), None,
+                       ("Edit Goal (TASK.md)...", self.edit_goal),
                        ("Start Run...", self.start_run)])
         menu("Validate", [("Requests...", self.show_requests), None,
                           ("Validate", self.run_validate), ("Drift", self.run_drift),
@@ -461,8 +479,10 @@ class Cockpit(tk.Tk):
         if not hasattr(self, "autonomy_label"):
             return  # called during init before the label exists
         lvl = self.autonomy.get()
+        running = getattr(self, "_run", None) is not None
         self.autonomy_label.config(
-            text=f"D{lvl} {autonomy.NAMES.get(lvl, '?')}  (the draft gate)")
+            text=f"D{lvl} {autonomy.NAMES.get(lvl, '?')}  "
+                 + ("(a run drafts without it)" if running else "(the draft gate)"))
 
     # ---- the delegation: who accepts a pending HARD change here -------------
 
@@ -600,11 +620,14 @@ class Cockpit(tk.Tk):
             messagebox.showerror("New project", why)
             return
         actions = groundwork.plan(answers)
+        goal = any(isinstance(a, groundwork.WriteTask) for a in actions)
         preview = "\n".join(
             ["This will write:", ""]
             + [f"  {root}/SPEC.md            the root `{answers['system_id']}`",
                f"  {root}/{answers['container']}/SPEC.md   the container, with its code layout",
                f"  {root}/ARCHITECTURE.md    {len(answers['invariants'])} invariant(s)"]
+            + ([f"  {root}/TASK.md            the goal a run is measured against"]
+               if goal else [])
             + ["", "and record all of it as the accepted state, so every later change",
                "is measured against it.", "", "Lay this floor?"])
         if not messagebox.askyesno("New project", preview):
@@ -1020,7 +1043,7 @@ class Cockpit(tk.Tk):
         self._set(self.view, spec)
         guidance = (
             f"AI draft for `{nid}` is in the editor. Review the contract lines, "
-            "then 'Save -> SPEC.md'."
+            "then 'Save'."
         )
         # search-before-build: warn if this intent matches an existing capability
         reranker, _ = self._semantic()
@@ -1239,7 +1262,7 @@ class Cockpit(tk.Tk):
         self._set(
             self.guidance,
             f"Revised draft for `{nid}` is in the editor (status preserved). Review the "
-            "diff against the current spec, then 'Save -> SPEC.md'. Then Validate / Drift."
+            "diff against the current spec, then 'Save'. Then Validate / Drift."
             + ("\n\n" + changeset.report(*assessed) if assessed else ""),
         )
 
@@ -1285,8 +1308,40 @@ class Cockpit(tk.Tk):
         self._set(self.view, text)
         self._set(
             self.guidance,
-            f"Loaded {path} into the editor.\nEdit it, then 'Save -> SPEC.md'.",
+            f"Loaded {path} into the editor.\nEdit it, then 'Save'.",
         )
+
+    def _unsaved_spec(self) -> str:
+        """The id of the spec in the editor when its SPEC.md does not hold it -- a
+        draft or a revision nobody saved, or a hand edit. "" when there is nothing
+        to lose: an empty editor, a bundle, a report, or a spec as it is on disk."""
+        text = self._get(self.view)
+        nid = _spec_id(text)
+        if not nid:
+            return ""
+        node = self.nodes.get(nid)
+        try:
+            on_disk = Path(node["_path"]).read_text(encoding="utf-8") if node else ""
+        except OSError:
+            on_disk = ""
+        return "" if on_disk.strip() == text else nid
+
+    def _target_picked(self) -> None:
+        """A node picked in the Target box: load its SPEC.md -- but not over a spec
+        nobody saved without asking; the draft would be gone."""
+        nid = self._target()
+        unsaved = self._unsaved_spec()
+        if unsaved and not messagebox.askyesno(
+                "Unsaved spec",
+                f"The editor holds a spec of {unsaved} that is not saved.\n\n"
+                f"Load {nid}'s SPEC.md and discard it?"):
+            if unsaved in self.nodes:
+                self.target.set(unsaved)  # back to the node the draft belongs to
+            self._set(self.guidance,
+                      f"Kept the unsaved spec of {unsaved} in the editor; the target is "
+                      f"{self._target() or 'unset'}.\n'Save' writes it there.")
+            return
+        self.load_spec()
 
     def save_spec(self) -> None:
         nid = self._target()
@@ -1471,11 +1526,24 @@ class Cockpit(tk.Tk):
                 return
             self.target.set(it["subject"])
             self.load_spec()
+            # the change, prepared for P: Revise turns the proposal into the contract
+            self._set(self.input,
+                      f"Apply this decision, requested by {it['node']}: {it['text']}\n"
+                      f"Reason: {it.get('reason', '')}\n"
+                      "Change only what the decision requires; keep everything else.")
             self._set(self.guidance,
                       f"Proposal from {it['node']} for {it['subject']}:\n  {it['text']}\n"
                       f"Reason: {it.get('reason', '')}\n\n"
-                      "Edit the contract in the editor and Save. Then mark the request "
-                      "Resolved in the Requests window.")
+                      f"{it['subject']}'s spec is in the editor, and the change is prepared "
+                      "in the Intent box. To resolve it:\n"
+                      "  1. Revise ->  P rewrites the contract as the proposal says.\n"
+                      "  2. Read the result and its change set; change what you mean "
+                      "differently.\n"
+                      "  3. Save      a container's contract is a HARD change: it asks first.\n"
+                      "  4. Resolved  in the Requests window -- removes the request from "
+                      f"{it['node']}.\n"
+                      "Or edit the spec by hand instead of step 1. Decided against it? "
+                      "Reject, in the Requests window.")
 
         def resolve() -> None:
             it = current()
@@ -1621,8 +1689,9 @@ class Cockpit(tk.Tk):
                 to_arch = it["subject"] == "ARCHITECTURE.md"
                 how = ("Accept   record the proposal as a dated ADR in ARCHITECTURE.md."
                        if to_arch else
-                       "Open target   edit that contract yourself -- a proposal in prose\n"
-                       "              is not merged into a contract automatically.\n"
+                       "Open target   load that contract, with the change prepared for\n"
+                       "              Revise: P rewrites it, you check and Save -- a\n"
+                       "              proposal in prose is never merged unseen.\n"
                        "Resolved      after you have saved your change.")
                 self._set(detail,
                           f"DECISION requested by {it['node']}\n"
@@ -1791,6 +1860,79 @@ class Cockpit(tk.Tk):
         "error": "The run could not go on -- the reason is in the window.",
     }
 
+    def edit_goal(self) -> None:
+        """TASK.md of this project, in an editor -- with P to propose a fuller goal
+        from what is there. Nothing is written until Save: the goal is H's prose
+        (SPEC-GROWTH-ENGINE.md 3.12), and P only proposes it."""
+        if self._run_busy("The goal"):
+            return
+        path = Path(self.root_dir) / "TASK.md"
+        text = path.read_text(encoding="utf-8") if path.is_file() else groundwork.task_text(
+            groundwork.WriteTask("", "", "", ""))
+        win = tk.Toplevel(self)
+        win.title(f"Goal - {path}")
+        win.geometry("900x700")
+        bar = ttk.Frame(win, padding=(8, 6))
+        bar.pack(side="bottom", fill="x")
+        status = ttk.Label(win, anchor="w", foreground="#5f5e5a", padding=(8, 4),
+                           text="The goal a run is measured against. P can propose a "
+                                "fuller one from what is here; nothing is saved until Save.")
+        status.pack(side="bottom", fill="x")
+        editor = ScrolledText(win, font=MONO, wrap="word", undo=True)
+        editor.pack(side="top", fill="both", expand=True)
+        editor.insert("1.0", text)
+        editor.edit_reset()
+
+        def suggest() -> None:
+            if llm.missing("planner"):
+                status.config(foreground="#b00000",
+                              text="P is not configured: " + ", ".join(llm.missing("planner")))
+                return
+            current = groundwork.goal_of(editor.get("1.0", "end"))
+            stack = groundwork._values(Path(self.root_dir)).get("CONTAINER", "")
+            button.state(["disabled"])
+            status.config(foreground="#5f5e5a", text="P is proposing ...")
+
+            def work():
+                try:
+                    proposal = groundwork.suggest_goal(
+                        current["purpose"], current["behaviours"], current["always"],
+                        current["out_of_scope"], planner, architecture=self.arch, stack=stack)
+                    error = None if proposal else "P gave no usable proposal."
+                except Exception as exc:  # noqa: BLE001 -- said in the window
+                    proposal, error = None, f"P is unavailable: {exc}"
+                self.after(0, done, current, proposal, error)
+            threading.Thread(target=work, daemon=True).start()
+
+        def done(current: dict, proposal: dict | None, error: str | None) -> None:
+            try:
+                button.state(["!disabled"])
+            except tk.TclError:
+                return                               # the window was closed meanwhile
+            if error:
+                status.config(foreground="#b00000", text=error)
+                return
+            editor.edit_separator()
+            editor.delete("1.0", "end")
+            editor.insert("1.0", groundwork.task_text(groundwork.WriteTask(
+                proposal["behaviours"], proposal["always"], proposal["out_of_scope"],
+                current["purpose"])))
+            editor.edit_separator()
+            status.config(foreground="#0a7d00",
+                          text="P's proposal -- edit it, then Save. Undo (Cmd/Ctrl+Z) brings "
+                               "back what was there; Close without saving keeps TASK.md.")
+
+        def save() -> None:
+            path.write_text(editor.get("1.0", "end").rstrip("\n") + "\n", encoding="utf-8")
+            status.config(foreground="#0a7d00", text=f"Saved {path}.")
+            self._set(self.guidance, f"Goal saved: {path}. A run is measured against it.")
+
+        button = ttk.Button(bar, text="Suggest with P", command=suggest)
+        button.pack(side="left")
+        ttk.Button(bar, text="Close", command=win.destroy).pack(side="right")
+        ttk.Button(bar, text="Save", command=save).pack(side="right", padx=4)
+        win._suggest, win._done, win._save, win._editor = suggest, done, save, editor
+
     def start_run(self) -> None:
         """Hand the AUTHORSHIP of intent to an agent, for this project, now.
 
@@ -1918,14 +2060,24 @@ class Cockpit(tk.Tk):
             self.show_requests()
 
     def _lock_for_run(self, locked: bool) -> None:
-        """Draft and Revise write the same SPEC.md files the run writes. While it
-        runs they are off -- not to protect the engine (the gate would catch it)
-        but so nobody edits under a writer they cannot see."""
-        for button in (getattr(self, "draft_button", None), getattr(self, "revise_button", None)):
+        """Draft, Revise and Save write the same SPEC.md files the run writes. While
+        it runs they are off -- not to protect the engine (the gate would catch it)
+        but so nobody edits under a writer they cannot see. The slider goes with
+        them: a run drafts through the command line, which no slider reaches, so
+        while one runs the draft gate decides nothing."""
+        for button in (getattr(self, "draft_button", None), getattr(self, "revise_button", None),
+                       getattr(self, "save_button", None)):
             try:
                 button.configure(state="disabled" if locked else "normal")
             except (AttributeError, tk.TclError):
                 pass
+        scale = getattr(self, "autonomy_scale", None)
+        if scale is not None:
+            try:
+                scale.state(["disabled"] if locked else ["!disabled"])
+            except tk.TclError:
+                pass
+        self._render_autonomy()
 
     def _run_busy(self, what: str, parent=None) -> bool:
         """True, and says so, while a run is in progress."""
@@ -2398,6 +2550,16 @@ class GroundworkDialog(tk.Toplevel):
                   text="One line each. 'Done means' is filled in for you -- it is the "
                        "method's standard, not yours to invent.").grid(
             row=len(groundwork.TASK_PROMPTS) * 3, column=0, sticky="w", padx=(16, 0))
+        suggest = ttk.Frame(self.goal_frame)
+        suggest.grid(row=len(groundwork.TASK_PROMPTS) * 3 + 1, column=0, sticky="w",
+                      padx=(16, 0), pady=(6, 0))
+        self.suggest_button = ttk.Button(suggest, text="Suggest with P",
+                                         command=self._suggest_goal)
+        self.suggest_button.pack(side="left")
+        self.suggest_status = ttk.Label(
+            suggest, foreground="#5f5e5a",
+            text="P turns your few words into a fuller goal -- you edit it; it stays yours.")
+        self.suggest_status.pack(side="left", padx=(8, 0))
         row += 1
 
         self.bind("<Escape>", lambda _e: self._cancel())
@@ -2423,6 +2585,50 @@ class GroundworkDialog(tk.Toplevel):
         if event.widget is self:
             for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
                 self.unbind_all(sequence)
+
+    def _goal_context(self) -> tuple[str, str]:
+        """(architecture, stack) as the dialog stands: what P must not contradict."""
+        kept = [line for var, line in self.defaults if var.get()]
+        kept += [entry.get().strip() for _q, entry in self.answers if entry.get().strip()]
+        return "\n".join(f"- {line}" for line in kept), self.layout_box.get()
+
+    def _suggest_goal(self) -> None:
+        """Ask P for a fuller goal, in the background; fill the fields with it."""
+        if not self._planner:
+            self.suggest_status.config(foreground="#b00000",
+                                       text="P has no endpoint (SGE_PLANNER_* in cockpit/.env).")
+            return
+        fields = {key: box.get("1.0", "end").strip() for key, box in self.goal.items()}
+        architecture, stack = self._goal_context()
+        purpose = self.purpose_entry.get().strip()
+        self.suggest_button.state(["disabled"])
+        self.suggest_status.config(foreground="#5f5e5a", text="P is proposing ...")
+
+        def work():
+            try:
+                proposal = groundwork.suggest_goal(
+                    purpose, fields["behaviours"], fields["always"], fields["out_of_scope"],
+                    self._planner, architecture=architecture, stack=stack)
+                error = None if proposal else "P gave no usable proposal."
+            except Exception as exc:  # noqa: BLE001 -- said in the dialog, never raised
+                proposal, error = None, f"P is unavailable: {exc}"
+            self.after(0, self._apply_goal_suggestion, proposal, error)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_goal_suggestion(self, proposal: dict | None, error: str | None) -> None:
+        try:
+            self.suggest_button.state(["!disabled"])
+        except tk.TclError:
+            return                                   # the dialog was closed meanwhile
+        if error:
+            self.suggest_status.config(foreground="#b00000", text=error)
+            return
+        for key, box in self.goal.items():
+            box.delete("1.0", "end")
+            box.insert("1.0", proposal.get(key, ""))
+        self.suggest_status.config(
+            foreground="#0a7d00",
+            text="P's proposal -- read it, change what you mean differently. It is your goal.")
 
     def _toggle_goal(self) -> None:
         """Open or close the goal fields -- and, opening them, scroll them into
@@ -2459,6 +2665,10 @@ class GroundworkDialog(tk.Toplevel):
             messagebox.showerror("New project",
                                  "A directory, a system id and a container are needed.",
                                  parent=self)
+            return
+        why = groundwork.refuses(directory)
+        if why:      # said here, while the dialog -- and what was typed -- is still open
+            messagebox.showerror("New project", why, parent=self)
             return
         self.result = {
             "root": directory, "system_id": system_id, "container": container,

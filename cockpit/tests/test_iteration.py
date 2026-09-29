@@ -604,3 +604,52 @@ def test_the_manual_does_not_send_a_waiting_run_into_blocked():
                       .read_text(encoding="utf-8").split())
     assert "STOP NORMALLY: say what waits" in manual
     assert "Waiting for H is not being blocked" in manual
+
+
+# ---- what C is doing, while I waits on it ----------------------------------------
+#
+# A run whose coder worked for minutes showed nothing in that time: C writes to
+# its own log, and I's stream is silent until C is done. It looked stalled.
+
+def test_the_watch_reports_the_last_new_line_of_a_coder_log(tmp_path):
+    import os
+    logs = tmp_path / ".sge" / "code"
+    logs.mkdir(parents=True)
+    old = logs / "util-20260101T000000.log"
+    old.write_text("from an earlier session\n", encoding="utf-8")
+    os.utime(old, (1, 1))                                  # before the watch began
+    out = io.StringIO()
+    watch = orchestrate.CoderWatch(tmp_path, out)
+    log = logs / "core.rules-20260929T125909.log"
+    log.write_text("reading the spec\nwriting match.py\n\n", encoding="utf-8")
+    watch.poll()
+    watch.poll()                                           # nothing new: nothing said
+    with open(log, "a", encoding="utf-8") as f:
+        f.write("running the tests\n")
+    watch.poll()
+    events = [json.loads(line) for line in out.getvalue().splitlines()]
+    assert [(e["type"], e["node"], e["line"]) for e in events] == [
+        ("sge.coder", "core.rules", "writing match.py"),
+        ("sge.coder", "core.rules", "running the tests")]
+    assert events[0]["log"] == ".sge/code/core.rules-20260929T125909.log"
+
+
+def test_the_run_passes_on_what_c_did_during_a_session(graph_root):
+    """The watch runs while the session does -- and looks once more when it ends,
+    so C's last line is not lost."""
+    def session_that_codes(argv, text, env, out):
+        log = graph_root / ".sge" / "code" / "util-20260929T130000.log"
+        log.parent.mkdir(parents=True, exist_ok=True)
+        log.write_text("wrote util/log.py\n", encoding="utf-8")
+        return _info()
+    run = _Run(graph_root, [], [_GREEN], [{"gaps": []}])
+    run.start = session_that_codes
+    assert run() == "done"
+    [coder] = run.events("sge.coder")
+    assert (coder["node"], coder["line"]) == ("util", "wrote util/log.py")
+
+
+def test_the_digest_shows_what_c_is_doing():
+    from runlog import lines
+    shown = lines({"type": "sge.coder", "node": "core.rules", "line": "writing match.py"})
+    assert shown == ["C core.rules   writing match.py"]

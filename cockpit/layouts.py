@@ -29,6 +29,9 @@ CATALOG: dict[str, tuple[str, list[str]]] = {
         "`{container}/src/main/java/**/<name>/**`; globs are project-root-relative.",
         "A component owns its own tests: component `{container}.<name>` also owns "
         "`{container}/src/test/java/**/<name>/**`.",
+        "Everything of this container lives under `{container}/` -- nothing at the project "
+        "root or elsewhere. It is built, tested and started through the container's own "
+        "manifest (`mvn -f {container}/pom.xml ...`); how it starts is configured there.",
         "An entry-point class in the ROOT package (`{container}/src/main/java/<pkg>/Main.java`, "
         "the Spring-Boot `Application.java` pattern) sits above the component directories and is "
         "covered by no component glob: the component that owns the entry point names it "
@@ -40,10 +43,13 @@ CATALOG: dict[str, tuple[str, list[str]]] = {
         "`{container}` is ONE uv project (`{container}/pyproject.toml`).",
         "Code layout (code tree separate from spec tree) -- component `{container}.<name>` owns "
         "`{container}/src/**/<name>/**`; globs are project-root-relative.",
-        "A component owns its own tests. Flat pytest layout (the common one): component "
-        "`{container}.<name>` also owns `{container}/tests/test_<name>*.py`. If this project "
-        "groups tests per component instead, it owns `{container}/tests/<name>/**` -- pick ONE "
-        "and keep it; a test file no component owns is an orphan.",
+        "A component owns its own tests, in the flat pytest layout: component "
+        "`{container}.<name>` also owns `{container}/tests/test_<name>*.py`. A test file no "
+        "component owns is an orphan.",
+        "Everything of this container lives under `{container}/` -- nothing at the project "
+        "root or elsewhere. The program is started through the container's own manifest: a "
+        "console script in `[project.scripts]` of `{container}/pyproject.toml` (the container's "
+        "own code), run from the project root as `uv run --project {container} <command>`.",
         "Package-root files (`{container}/src/<pkg>/__init__.py`, `__main__.py`) are covered by "
         "no component glob, so the component that owns the entry point names them explicitly in "
         "its own `code`. Leaving them unowned makes them orphans and blocks the gate.",
@@ -54,9 +60,12 @@ CATALOG: dict[str, tuple[str, list[str]]] = {
         "`{container}` is ONE npm package (`{container}/package.json`).",
         "Code layout (code tree separate from spec tree) -- component `{container}.<name>` owns "
         "`{container}/src/<name>/**`; globs are project-root-relative.",
-        "A component owns its own tests. Tests are CO-LOCATED here (`foo.test.tsx` next to "
-        "`foo.tsx`), so the glob above already covers them. If this project uses a separate "
-        "`{container}/tests/` tree instead, the component must own its part of it explicitly.",
+        "A component owns its own tests, CO-LOCATED (`foo.test.tsx` next to `foo.tsx`), so the "
+        "glob above already covers them; there is no separate tests tree.",
+        "Everything of this container lives under `{container}/` -- nothing at the project "
+        "root or elsewhere. The program is started through a script in "
+        "`{container}/package.json` (the container's own code), run from the project root as "
+        "`npm --prefix {container} run <script>`.",
         "The package entry point (`{container}/src/index.ts(x)`) is covered by no component glob: "
         "the component that owns the entry point names it explicitly in its own `code`.",
         "The container owns only its build manifest (`{container}/package.json`); a component never has an empty code glob.",
@@ -71,6 +80,9 @@ CATALOG: dict[str, tuple[str, list[str]]] = {
         "`{container}.<name>` also owns `{container}/tests/<name>*.rs`.",
         "The crate root (`{container}/src/main.rs` or `lib.rs`) is covered by no component glob: "
         "the component that owns the entry point names it explicitly in its own `code`.",
+        "Everything of this container lives under `{container}/` -- nothing at the project "
+        "root or elsewhere. The program is started from the project root as "
+        "`cargo run --manifest-path {container}/Cargo.toml`.",
         "The container owns only its build manifest (`{container}/Cargo.toml`); a component never has an empty code glob.",
     ]),
     FREEFORM: ("Freeform (fill in the invariants yourself)", []),

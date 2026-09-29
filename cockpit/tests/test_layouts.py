@@ -81,8 +81,32 @@ def test_python_layout_covers_the_flat_pytest_convention():
     """The case that blocked a plain project: tests/test_store.py, not tests/store/."""
     joined = " ".join(layouts.template("python-uv-src"))
     assert "tests/test_<name>*.py" in joined
-    assert "tests/<name>/**" in joined          # the per-component form is still offered
-    assert "pick ONE" in joined                 # ...but not both at once
+
+
+# ---- a layout decides; it does not offer a choice nobody makes --------------------
+#
+# The Python layout offered two test layouts and said "pick ONE" -- and nobody
+# picks when a floor is laid. The first component of the Pong run had to declare
+# a test glob and could only ask the container: a decision request, raised by
+# every new Python project. And no layout said where the program starts, so the
+# run invented a launcher at the project root, which no component can own.
+
+_ARCHETYPES = [k for k in layouts.CATALOG if k != layouts.FREEFORM]
+
+
+@pytest.mark.parametrize("key", _ARCHETYPES)
+def test_every_layout_decides_where_the_tests_are(key):
+    joined = " ".join(layouts.template(key))
+    assert "pick ONE" not in joined and " instead" not in joined, key
+    assert "owns its own tests" in joined
+
+
+@pytest.mark.parametrize("key", _ARCHETYPES)
+def test_every_layout_keeps_the_container_in_its_tree_and_says_how_it_starts(key):
+    joined = " ".join(layouts.template(key))
+    assert "Everything of this container lives under `{container}/`" in joined, key
+    assert "nothing at the project root" in joined, key
+    assert "{container}/" in joined.split("started")[-1] or "manifest" in joined, key
 
 
 # ---- the entry point has an owner -------------------------------------------

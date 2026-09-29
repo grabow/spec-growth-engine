@@ -161,6 +161,29 @@ left waiting that H' could accept. The delegation matters when someone ELSE
 changes the specs: an agent, in a run. (Or a spec edited outside the cockpit --
 then `cli.py decide` lets H' take its share.)
 
+**Who clears a change, and where.** It is tempting to read the switches as one
+ladder -- if H' may accept a HARD change, surely it may accept a SOFT one, so the
+delegation should imply D2. It does not, because the two switches act on
+different changes in different places:
+
+```text
+                in the cockpit (you draft)            in a run (an agent writes)
+--------------  ------------------------------------  ------------------------------------
+a SOFT change   the slider: D0 you, D1 you after H'   E, on a passing gate -- wherever
+                reviewed it, D2 H'                    the slider stands
+a HARD change   you, always, when you save            you -- or, with the delegation on,
+                                                      H' for ONE narrow kind: a breaking
+                                                      change to a consumed component
+                                                      contract that E found migrated
+```
+
+In a run, SOFT changes are cleared anyway -- by E, not by D2. In the cockpit the
+delegation has nothing to act on. And the slider plays no part in a run, on or
+unsupervised: the agent drafts through the command line, which no slider
+reaches. What H' judges differs too: at D1 and D2 the QUALITY of a draft (what,
+not how; testable criteria; reuse), under the delegation whether a broken
+promise has been MIGRATED.
+
 **And a row the table cannot show, because it needs nothing:** write the SPEC.md
 files yourself, in an editor or with Load Spec, and the whole first layer still
 works -- the gate, drift, test evidence, the change set, the accepted state, a
@@ -218,9 +241,15 @@ slowly, and the failure reads like the agent's.
 
 ```text
 while it runs   one line per event in the Run window, the same the log shows
-                (`runlog.py`); after every round the cockpit re-reads the graph,
-                so the tree and the Requests count follow along
-                Draft and Revise are OFF: an agent is writing those files
+                (`runlog.py`) -- and while C implements a node, which can take
+                minutes, its latest line every few seconds (`C <node> ...`), so a
+                working run does not look like a stalled one; after every round
+                the cockpit re-reads the graph, so the tree and the Requests
+                count follow along
+                Draft, Revise and Save are OFF: an agent is writing those
+                files. The slider is greyed out too, "(a run drafts without
+                it)": a run's drafts never pass it, and a change you can
+                not see take effect should not be settable
 when it ends    the outcome in plain words -- done | asking | blocked | stalled |
                 limit | unchecked | error -- and for `asking`, the Requests
                 window opens, because that is where the question is.
@@ -318,6 +347,11 @@ look.
 In the cockpit, Save measures against the same accepted state and records what
 you saved; a D2 auto-save records H' as the one who accepted it. Without the
 file nothing is tracked and everything behaves as before.
+
+Picking a node in the **Target node** box loads its `SPEC.md` into the editor.
+If the editor holds a spec nobody saved -- a draft, a revision, a hand edit --
+the cockpit asks first; say no, and the draft stays, with the target back on the
+node it belongs to.
 
 The GUI also has a graphical view of the SPEC graph. Use the **Tree...** button
 next to the target selector or **Node > Show Tree**. Clicking a node selects it
@@ -519,14 +553,22 @@ deleted from the cockpit:
   `TASK.md` from them -- through the method's template
   (`spec-growth-engine/TASK.template.md`), with its own "Done means" filled in,
   because that part is the same in every project and not a newcomer's to invent
-  (3.12). A person working the cockpit leaves the box unticked: their goal is in
-  their head. It stops there: components and starting a run are the steps after
+  (3.12). A few words are not a goal a run can be checked against: **Suggest
+  with P** has the planner turn them into a fuller one -- observable behaviours,
+  what must always hold (above all: testable without a screen), what is out of
+  scope -- in the fields, for you to edit; nothing is written until you lay the
+  floor, and it stays your goal. A person working the cockpit leaves the box
+  unticked: their goal is in their head. It stops there: components and starting a run are the steps after
   it. The directory may be anywhere, and need not exist yet. Headless: `cli.py
   init ROOT --id ID --container NAME [--archetype KEY] [--invariant LINE]...`.
 - **New Project Like...** - lays the floor another project was laid with, in a
   new directory: the answers it recorded (`.sge/groundwork.json`) and its
   `TASK.md` as it reads now. A second attempt at the same task is a new
   directory, not the first one reset. Headless: `cli.py init NEW --like OLD`.
+- **Edit Goal (TASK.md)...** (Build menu) - the goal of this project in an
+  editor, with the same **Suggest with P**: the planner proposes a fuller goal
+  from what is there, in the editor, and only Save writes it. For a goal that
+  turned out too thin -- before a run, not after it.
 - **Refresh Manuals** - renders `AGENTS.md` and `ORCHESTRATOR.md` again from the
   method's templates, after they changed. The copies are generated: an edit to
   them belongs in the template. Headless: `cli.py manuals ROOT`.
@@ -607,7 +649,7 @@ removed, dependents = nodes.delete_node("api.discount", n)       # recursive=Tru
    the planner applies the change request (Intent box) in place, preserving untouched
    fields (code globs, depends_on, design.verification, ...) AND the node's status.
    Use Draft for a fresh node, Revise to evolve one. (Or **Load SPEC** to edit by hand.)
-3. **Save -> SPEC.md** - write the reviewed spec, reindex. The frontmatter is
+3. **Save** - write the reviewed spec, reindex. The frontmatter is
    auto-repaired for the one recurring YAML breakage (an unquoted `word: word`
    colon or leading backtick in a scalar): the offending line is quoted, reported in
    Guidance (transparent, never silent). The SAME healing runs **on load/reload**
