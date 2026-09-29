@@ -340,6 +340,48 @@ def test_the_codex_command_ignores_the_users_codex_config(monkeypatch):
         assert argv.index("--ignore-user-config") < argv.index("-m")   # an option, not the prompt
 
 
+def test_the_reasoning_effort_is_the_roles_own_and_optional(monkeypatch):
+    """SGE_<ROLE>_REASONING_EFFORT reaches the harness as written -- and without
+    it nothing is passed, so the provider's own default holds."""
+    from agent import codex_cli
+    for role in ("CODER", "INTENT"):
+        monkeypatch.setenv(f"SGE_{role}_BASE_URL", "https://api.example/v1")
+        monkeypatch.setenv(f"SGE_{role}_API_KEY", "k")
+        monkeypatch.setenv(f"SGE_{role}_MODEL", "m")
+        monkeypatch.setenv(f"SGE_{role}_HARNESS", "codex-cli")
+    monkeypatch.setenv("SGE_CODER_REASONING_EFFORT", "high")
+    coder_argv, _ = codex_cli.command("coder")
+    intent_argv, _ = codex_cli.command("intent", resume="t-1")
+    assert 'model_reasoning_effort="high"' in coder_argv
+    assert coder_argv[coder_argv.index('model_reasoning_effort="high"') - 1] == "-c"
+    assert not any("reasoning" in a for a in intent_argv)       # not another role's
+    assert llm.describe("coder").endswith(", reasoning high")
+    assert "reasoning" not in llm.describe("intent")
+
+
+def test_the_chat_call_carries_the_roles_reasoning_effort(monkeypatch):
+    """P and H' each pass their OWN effort -- H' reviewing with P's model still
+    thinks as hard as H' is set to."""
+    import json as _json
+    from types import SimpleNamespace
+    seen = []
+
+    def create(**kw):
+        seen.append(kw)
+        call = SimpleNamespace(function=SimpleNamespace(arguments=_json.dumps({"ok": 1})))
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(tool_calls=[call]), finish_reason="stop")])
+
+    client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    tool = {"type": "function", "function": {"name": "t", "parameters": {}}}
+    monkeypatch.setenv("SGE_REVIEWER_REASONING_EFFORT", "medium")
+    monkeypatch.delenv("SGE_PLANNER_REASONING_EFFORT", raising=False)
+    llm._call_tool(client, tool, "p", model="m", role="reviewer")
+    llm._call_tool(client, tool, "p", model="m")                  # the planner's: unset
+    assert seen[0]["reasoning_effort"] == "medium"
+    assert "reasoning_effort" not in seen[1]
+
+
 def test_c_never_gets_an_open_stdin(monkeypatch):
     """codex exec waits on an open stdin: the first smoke test hung until killed."""
     import subprocess

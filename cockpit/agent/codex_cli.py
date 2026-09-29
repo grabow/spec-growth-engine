@@ -66,6 +66,9 @@ def command(role: str, *, json_events: bool = False,
         "-c", f"model_providers.{provider}.fallback_chat=true",
         "-c", f'model_providers.{provider}.fallback_chat_path="/chat/completions"',
         "-m", ep["model"],
+        # the role's own, from cockpit/.env; unset, the provider's default holds
+        *(["-c", f'model_reasoning_effort="{ep["reasoning_effort"]}"']
+          if ep["reasoning_effort"] else []),
     ]
     if json_events:
         argv.append("--json")

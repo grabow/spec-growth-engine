@@ -91,7 +91,8 @@ def review_draft(
         f"ARCHITECTURE.md:\n{architecture or '(none)'}\n\n"
         f"EXISTING CAPABILITIES (for reuse):\n{caps}"
     )
-    data, _ = _call_tool(client, _REVIEW_TOOL, prompt, model=model or reviewer_model())
+    data, _ = _call_tool(client, _REVIEW_TOOL, prompt, model=model or reviewer_model(),
+                         role="reviewer")
     if not data:
         return None
     findings = []
@@ -179,7 +180,8 @@ def brief_hard_change(
         f"CURRENT SPEC.md (after):\n{current_spec}\n\n"
         f"ARCHITECTURE.md:\n{architecture or '(none)'}"
     )
-    data, _ = _call_tool(client, _BRIEF_TOOL, prompt, model=model or reviewer_model())
+    data, _ = _call_tool(client, _BRIEF_TOOL, prompt, model=model or reviewer_model(),
+                         role="reviewer")
     return {**data, "model": model or reviewer_model()} if data else None
 
 
@@ -274,7 +276,8 @@ def check_goal(task: str, facts: str, previous: list[str] = (),
         + ("\n\nGAPS YOU NAMED AFTER THE PREVIOUS ROUND (answer for each):\n"
            + "\n".join(f"- {g}" for g in previous) if previous else "")
     )
-    data, _ = _call_tool(client, _GOAL_TOOL, prompt, model=model or reviewer_model())
+    data, _ = _call_tool(client, _GOAL_TOOL, prompt, model=model or reviewer_model(),
+                         role="reviewer")
     if not data:
         return None
     return {"gaps": _items(data.get("gaps")), "waiting": _items(data.get("waiting")),
@@ -345,7 +348,8 @@ def answer_request(request: dict, asker: str, asker_spec: str, target_text: str,
         f"ARCHITECTURE.md:\n{architecture or '(none)'}\n\n"
         f"TASK.md:\n{task or '(not given)'}"
     )
-    data, _ = _call_tool(client, _ANSWER_TOOL, prompt, model=model or reviewer_model())
+    data, _ = _call_tool(client, _ANSWER_TOOL, prompt, model=model or reviewer_model(),
+                         role="reviewer")
     if not data or data.get("decision") not in ("accept", "reject"):
         return None
     try:

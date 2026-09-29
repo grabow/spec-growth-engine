@@ -11,6 +11,10 @@ a choice.
   coder    C  SPEC -> code                 SGE_CODER_BASE_URL / _API_KEY / _MODEL
                                            / _HARNESS
 
+  optional, every role: SGE_<ROLE>_REASONING_EFFORT -- how hard the model thinks
+  (e.g. low | medium | high), passed as it is written: to the chat call for P and
+  H', to the harness for I and C. Unset, the provider's own default holds.
+
 Every role is set the same way, and only by its own settings: nothing falls
 back to another role, and nothing to a provider this code would have to know.
 Two roles on the same model repeat the same values -- which is what makes it
@@ -37,6 +41,7 @@ import openai
 ROLES = ("planner", "reviewer", "intent", "coder")
 AGENT_ROLES = ("intent", "coder")
 FIELDS = ("BASE_URL", "API_KEY", "MODEL")
+OPTIONAL = ("REASONING_EFFORT",)
 # harness -> the executable it needs on PATH
 HARNESSES = {"codex-cli": "codex"}
 
@@ -66,6 +71,7 @@ def endpoint(role: str) -> dict:
     return {"base_url": _setting(role, "BASE_URL"), "api_key": key,
             "model": _setting(role, "MODEL"),
             "harness": _setting(role, "HARNESS") if role in AGENT_ROLES else "",
+            "reasoning_effort": _setting(role, "REASONING_EFFORT"),
             "key_from": variable(role, "API_KEY") if key else ""}
 
 
@@ -91,9 +97,11 @@ def missing(role: str) -> list[str]:
 
 
 def describe(role: str) -> str:
-    """'<model> @ <base_url>' -- for logs and run records. Never the key."""
+    """'<model> @ <base_url>' -- for logs and run records, with the reasoning
+    effort when one is set. Never the key."""
     ep = endpoint(role)
-    return f"{ep['model'] or '(no model set)'} @ {ep['base_url'] or '(no URL set)'}"
+    effort = f", reasoning {ep['reasoning_effort']}" if ep["reasoning_effort"] else ""
+    return f"{ep['model'] or '(no model set)'} @ {ep['base_url'] or '(no URL set)'}{effort}"
 
 
 def planner_model() -> str:
@@ -137,8 +145,8 @@ def _tool_args(resp) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _call_tool(client, tool: dict, prompt: str, *,
-               model: str | None) -> tuple[dict, str | None]:
+def _call_tool(client, tool: dict, prompt: str, *, model: str | None,
+               role: str = "planner") -> tuple[dict, str | None]:
     """Make the model call `tool` once; return (its arguments, finish_reason).
 
     No max_tokens, on purpose: GLM-5.2 reasons before it answers, the reasoning
@@ -152,6 +160,9 @@ def _call_tool(client, tool: dict, prompt: str, *,
     failure to report, never a silent empty answer."""
     kwargs = dict(model=model or planner_model(), tools=[tool],
                   messages=[{"role": "user", "content": prompt}])
+    effort = endpoint(role)["reasoning_effort"]      # the ROLE's, whichever model
+    if effort:
+        kwargs["reasoning_effort"] = effort
     forced = {"type": "function", "function": {"name": tool["function"]["name"]}}
     try:
         resp = client.chat.completions.create(**kwargs, tool_choice=forced)

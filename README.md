@@ -107,10 +107,12 @@ runs them -- the Codex CLI, `codex-cli`, the only one so far:
 SGE_PLANNER_BASE_URL=https://...       # any OpenAI-compatible provider
 SGE_PLANNER_API_KEY=...
 SGE_PLANNER_MODEL=<model id>           # the same three lines for REVIEWER
+SGE_PLANNER_REASONING_EFFORT=high      # optional, any role: e.g. low | medium | high
 
-SGE_CODER_BASE_URL=https://...         # the same four lines for INTENT
+SGE_CODER_BASE_URL=https://...         # the same lines for INTENT
 SGE_CODER_API_KEY=...
 SGE_CODER_MODEL=<model id>
+SGE_CODER_REASONING_EFFORT=high
 SGE_CODER_HARNESS=codex-cli
 ```
 

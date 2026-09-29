@@ -447,18 +447,27 @@ one command can override a role: `SGE_CODER_MODEL=... uv run python cli.py run R
 **How.** Every role is set the same way, by three lines -- an OpenAI-compatible
 endpoint (any provider that speaks that API, or a local server), its key, and
 the model as that provider names it. The two agents take a fourth: the
-HARNESS, the agent CLI that runs them.
+HARNESS, the agent CLI that runs them. Every role may take one more, optional:
+the REASONING_EFFORT, how hard the model thinks (e.g. `low | medium | high`, what
+the provider accepts), passed as written -- to the chat call for P and H', to
+the Codex CLI (`model_reasoning_effort`) for I and C. Unset, the provider's own
+default holds.
 
 ```sh
 SGE_PLANNER_BASE_URL=https://...
 SGE_PLANNER_API_KEY=...
 SGE_PLANNER_MODEL=<model id>       # the same three lines for REVIEWER
+SGE_PLANNER_REASONING_EFFORT=high  # optional, for every role
 
 SGE_CODER_BASE_URL=https://...
 SGE_CODER_API_KEY=...
 SGE_CODER_MODEL=<model id>
-SGE_CODER_HARNESS=codex-cli        # the same four lines for INTENT
+SGE_CODER_REASONING_EFFORT=high
+SGE_CODER_HARNESS=codex-cli        # the same lines for INTENT
 ```
+
+One order in every block: BASE_URL, API_KEY, MODEL, REASONING_EFFORT, and
+HARNESS for the two agents.
 
 **Nothing falls back.** A role without its three lines is not configured -- not
 borrowed from another role, not defaulted to a provider -- and whatever asks for

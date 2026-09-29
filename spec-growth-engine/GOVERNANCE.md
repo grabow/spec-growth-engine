@@ -102,6 +102,9 @@ endpoint -- URL, key, model -- in `cockpit/.env` (`cockpit/agent/llm.py`,
 SGE_<ROLE>_BASE_URL    the provider's OpenAI-compatible URL
 SGE_<ROLE>_API_KEY     the key
 SGE_<ROLE>_MODEL       the model id at that provider
+SGE_<ROLE>_REASONING_EFFORT
+                       optional: how hard the model thinks (e.g. low | medium |
+                       high), passed as written; unset, the provider's default
 SGE_<ROLE>_HARNESS     I and C only: the agent CLI that runs them -- codex-cli,
                        the Codex CLI (github.com/openai/codex), required for both
 <ROLE> = PLANNER | REVIEWER | INTENT | CODER

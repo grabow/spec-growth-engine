@@ -16,7 +16,7 @@ def _no_real_endpoints(monkeypatch):
     import os
     for name in list(os.environ):
         if name.startswith("SGE_") and name.endswith(("_BASE_URL", "_API_KEY", "_MODEL",
-                                                      "_HARNESS")):
+                                                      "_HARNESS", "_REASONING_EFFORT")):
             monkeypatch.delenv(name, raising=False)
 
 
