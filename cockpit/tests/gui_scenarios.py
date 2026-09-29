@@ -560,6 +560,64 @@ def picking_a_target_loads_its_spec():
     _check(c.view.get("1.0", "end").strip() == gui.strip(), "svc.gui's spec was not loaded")
 
 
+def codex_builds_its_context():
+    """Codex gives C a bundle built from the SAVED specs, every time -- never the
+    editor's text: not a bare SPEC.md, not another node's bundle, not an edit.
+    Build Context is a read-only preview; an unsaved spec stops Codex, because C
+    implements what is saved."""
+    import app
+    c = _cockpit()
+    sent = []
+
+    def implement(bundle, nid, **kw):
+        sent.append(bundle)
+        raise OSError("not launched in a test")
+
+    def for_gui(bundle):
+        return (bundle.startswith("# ARCHITECTURE.md")
+                and "# Target node: svc.gui (full spec)" in bundle)
+
+    app.coder.command = lambda: (["codex"], {})
+    app.coder.implement = implement
+
+    # the spec of svc.gui in the editor -- as picking the node leaves it
+    c.target.set("svc.gui")
+    c.target.event_generate("<<ComboboxSelected>>")
+    _settle(c)
+    c.run_agent()
+    _check(len(sent) == 1 and for_gui(sent[0]), f"C got no bundle: {sent[-1][:80] if sent else ''}")
+    _check(c.view.get("1.0", "end").strip() == sent[0].strip(), "what C got is not shown")
+
+    # a bundle of ANOTHER node in the editor: C still gets svc.gui's
+    c.target.set("svc")
+    c.build_ctx()
+    c.target.set("svc.gui")
+    c.run_agent()
+    _check(for_gui(sent[-1]), "C got the bundle of svc")
+
+    # the preview is read-only, and even a forced edit does not reach C
+    c.build_ctx()
+    _check(str(c.view.cget("state")) == "disabled", "the preview can be edited")
+    said = c.guidance.get("1.0", "end")
+    _check("preview" in said and "saved specs" in said, said)
+    c.view.configure(state="normal")
+    c.view.insert("end", "\nNOTE: keep choose() pure.")
+    c.run_agent()
+    _check("NOTE" not in sent[-1], "an edit of the bundle reached C")
+
+    # anything written to the editor makes it writable again
+    c.load_spec()
+    _check(str(c.view.cget("state")) == "normal", "a loaded spec stayed read-only")
+
+    # an unsaved spec: nothing is sent
+    c._set(c.view, c.view.get("1.0", "end").strip().replace("purpose: y", "purpose: z"))
+    before = len(sent)
+    c.run_agent()
+    _check(len(sent) == before, "C was started over an unsaved spec")
+    said = c.guidance.get("1.0", "end")
+    _check("not saved" in said, said)
+
+
 def edit_goal_with_p():
     """For a project that exists: TASK.md in an editor, P's proposal in its place,
     written only by Save."""
@@ -600,7 +658,8 @@ SCENARIOS = {f.__name__: f for f in (badge, validate, grant, invalid_grant, stal
                                      edit_goal_with_p,
                                      new_project_over_a_floor_keeps_the_dialog,
                                      open_target_prepares_the_revise,
-                                     picking_a_target_loads_its_spec)}
+                                     picking_a_target_loads_its_spec,
+                                     codex_builds_its_context)}
 
 if __name__ == "__main__":
     SCENARIOS[sys.argv[1]]()

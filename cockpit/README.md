@@ -665,10 +665,16 @@ removed, dependents = nodes.delete_node("api.discount", n)       # recursive=Tru
    or to a container, a new container, an id/kind/parent change, the root contract,
    a waiver grant -- asks you to confirm with that report in front of you. Draft
    and Revise show the same report in Guidance.
-4. **Build context** - assemble the scoped bundle:
-   ARCHITECTURE.md (global invariants) + ancestor contracts (short) +
-   target spec (full) + own code + dependency contracts (one hop).
-5. **-> Codex** - coding agent implements within the bundle. Output opens in a
+4. **Build context** (optional) - a read-only preview of the scoped bundle C gets:
+   ARCHITECTURE.md (global invariants) + ancestor contracts (short) + target spec
+   (full) + own code + dependency contracts (one hop). To change what C gets,
+   change the spec (or ARCHITECTURE.md) and save -- an edit of the bundle would be
+   recorded nowhere, and the gate would measure against something else.
+5. **Codex** - the coding agent implements within the bundle, which Codex builds
+   when you press it, from the SAVED specs -- whatever the editor holds, as
+   `cli.py code` and every run do. An unsaved spec in the editor stops it: C would
+   implement the saved one, and the bundle would replace your draft. For a one-off
+   hint, use **Ask Codex** in the output window. Output opens in a
    separate window with a live status bar (running/finished, elapsed, process-tree
    CPU, idle since last output) and an **Ask Codex** input box: type a follow-up and
    it replays the prior context + output with your message as a fresh `codex exec`

@@ -714,6 +714,7 @@ class Cockpit(tk.Tk):
 
     @staticmethod
     def _set(widget: ScrolledText, text: str) -> None:
+        widget.configure(state="normal")  # a preview leaves the editor read-only
         widget.delete("1.0", "end")
         widget.insert("1.0", text)
 
@@ -1194,7 +1195,8 @@ class Cockpit(tk.Tk):
             return (f"D2: H' approved & auto-saved {path}, BUT the deterministic gate "
                     f"BLOCKS (the hard floor wins -- fix needed):\n{hard}")
         return (f"D2: H' approved (confidence {conf:.2f}, {rounds} revise round(s)) "
-                f"-> auto-saved {path}. Deterministic gate: pass. Next: Build context / Codex."
+                f"-> auto-saved {path}. Deterministic gate: pass. "
+                "Next: 'Codex' (the context is built automatically)."
                 + self._independence_note())
 
     def _d2_escalate(self, nid: str, spec: str, review: dict, reason: str,
@@ -1369,12 +1371,13 @@ class Cockpit(tk.Tk):
                 return
         path, fixes, repaired = self._persist_spec(nid, text)
         self._record_intent(nid, assessed[0]["gate"] if assessed else None)
-        msg = f"Wrote {path}\nNext: 'Build context' then '-> Codex'."
+        msg = f"Wrote {path}\nNext: 'Codex' (the context is built automatically)."
         if fixes:
             self._set(self.view, repaired)  # reflect the repaired text back into the editor
             quoted = "\n".join(f"  line {ln}: {c}" for ln, c in fixes)
             msg = (f"Wrote {path}\nAuto-quoted {len(fixes)} YAML line(s) (colon/backtick "
-                   f"in an unquoted scalar):\n{quoted}\nNext: 'Build context' then '-> Codex'.")
+                   f"in an unquoted scalar):\n{quoted}\n"
+                   "Next: 'Codex' (the context is built automatically).")
         if assessed:
             msg += "\n" + changeset.summary(assessed[0])
             msg += self._record_accepted(nid, by=getpass.getuser())
@@ -1393,18 +1396,33 @@ class Cockpit(tk.Tk):
         return path, fixes, text
 
     def build_ctx(self) -> None:
-        self._reload_quiet()  # reflect on-disk truth (coder / external edits)
         nid = self._target()
         if not nid:
             self._set(self.guidance, "Pick a target node.")
             return
+        bundle = self._context_bundle(nid)
+        if bundle is None:
+            return
+        self._preview(bundle)
+        self._set(self.guidance,
+                  f"Context bundle for `{nid}` -- a preview, read-only: what 'Codex' gives "
+                  "C, built again from the saved specs when you press it. To change what C "
+                  "gets, change the spec (or ARCHITECTURE.md) and save.")
+
+    def _preview(self, text: str) -> None:
+        """Show text that is not for editing -- an edit would go nowhere. Anything
+        written to the editor after it (a spec loaded, a draft) makes it writable."""
+        self._set(self.view, text)
+        self.view.configure(state="disabled")
+
+    def _context_bundle(self, nid: str) -> str | None:
+        """Context(N) from what is on disk; None, said in Guidance, if it fails."""
+        self._reload_quiet()  # reflect on-disk truth (coder / external edits)
         try:
-            bundle = context.assemble(self.nodes, self.arch, nid, self.root_dir)
+            return context.assemble(self.nodes, self.arch, nid, self.root_dir)
         except Exception as exc:  # surface, never fail silently
             self._set(self.guidance, f"Build context FAILED: {type(exc).__name__}: {exc}")
-            return
-        self._set(self.view, bundle)
-        self._set(self.guidance, f"Context bundle for `{nid}` built. Review, then '-> Codex'.")
+            return None
 
     def run_validate(self) -> None:
         self._reload_quiet()  # reflect on-disk truth (coder / external edits)
@@ -2094,11 +2112,24 @@ class Cockpit(tk.Tk):
     def run_agent(self) -> None:
         if self._run_busy("The coder"):
             return
-        bundle = self._get(self.view)
         nid = self._target()
-        if not bundle:
-            self._set(self.guidance, "Build a context bundle first.")
+        if nid not in self.nodes:
+            self._set(self.guidance, "Pick an existing target node first.")
             return
+        # C gets Context(N) built NOW from the saved specs -- never the editor's text,
+        # as `cli.py code` and every run do: C must implement what the gate measures,
+        # and an edit of the bundle would be recorded nowhere
+        unsaved = self._unsaved_spec()
+        if unsaved:
+            self._set(self.guidance,
+                      f"The editor holds a spec of {unsaved} that is not saved, and C "
+                      "implements the SAVED SPEC.md. 'Save' first -- or pick the node "
+                      "again to discard it.")
+            return
+        bundle = self._context_bundle(nid)
+        if bundle is None:
+            return
+        self._preview(bundle)  # what C got, to read
         node = self.nodes.get(nid)
         broot = coder.build_root_for_node(node, self.root_dir) if node else None
 
@@ -2155,7 +2186,10 @@ class Cockpit(tk.Tk):
         # Enter inserts a newline (3-line box); send with the button or Cmd/Ctrl+Enter.
         entry.bind("<Control-Return>", lambda _e: (self._codex_followup(st), "break")[1])
         entry.bind("<Command-Return>", lambda _e: (self._codex_followup(st), "break")[1])
-        self._set(self.guidance, f"Coding agent running in {broot} ...\n(see the Codex output window)")
+        self._set(self.guidance,
+                  f"Built the context bundle for `{nid}` from the saved specs -- it is in "
+                  f"the editor.\nCoding agent running in {broot} ...\n"
+                  "(see the Codex output window)")
         self._start_codex_stream(proc, st)
 
     def _start_codex_stream(self, proc, st: dict) -> None:
