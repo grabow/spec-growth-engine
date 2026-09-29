@@ -254,6 +254,7 @@ class Cockpit(tk.Tk):
         self.graph_zoom = 1.0
         self._graph_root: str | None = None  # root the view state belongs to
         self._run: dict | None = None        # the run in progress, if any
+        self._checking = False               # a goal check in progress (check_goal)
         self._run_win: tk.Toplevel | None = None  # the last run's window, hidden or not
         self._save_config()  # persist the resolved root
         self._update_title()
@@ -390,6 +391,7 @@ class Cockpit(tk.Tk):
         menu("Build", [("Build Context", self.build_ctx), ("Codex", self.run_agent),
                        ("Run Tests", self.run_tests_action), None,
                        ("Edit Goal (TASK.md)...", self.edit_goal),
+                       ("Check Goal (TASK.md)", self.check_goal),
                        ("Start Run...", self.start_run),
                        ("Show Run Window", self.show_run_window)])
         menu("Validate", [("Requests...", self.show_requests), None,
@@ -1877,7 +1879,8 @@ class Cockpit(tk.Tk):
         "limit": "The round limit was reached with gaps still open.",
         "unchecked": "H' could not be reached, so nobody checked the goal. The work stands "
                      "unjudged.",
-        "error": "The run could not go on -- the reason is in the window.",
+        "error": "The run could not go on. The whole record is in the run's window and "
+                 "in .sge/runs/NN.log.",
     }
 
     def edit_goal(self) -> None:
@@ -1953,6 +1956,58 @@ class Cockpit(tk.Tk):
         ttk.Button(bar, text="Save", command=save).pack(side="right", padx=4)
         win._suggest, win._done, win._save, win._editor = suggest, done, save, editor
 
+    _CHECK_SAID = {
+        "done": "The goal is met, as far as E and H' can tell. Nothing to do.",
+        "gaps": "What TASK.md asks for is not all there. Close the gaps by hand (Revise, "
+                "Save, Codex) or let a run do it (Build > Start Run...).",
+        "asking": "Nothing is missing, but something waits for you -- in Requests.",
+        "red": "The floor comes first: the failing tests and gate errors are above; "
+               "Run Tests, Validate and Drift show them in full.",
+        "unchecked": "E's floor is green, but nobody checked the goal: H' is not reachable "
+                     "(cockpit/.env, SGE_REVIEWER_*).",
+    }
+
+    def check_goal(self) -> None:
+        """Does the project meet its goal, as it stands? E runs the tests and the
+        gate, and on a green floor H' checks the result against TASK.md -- what a
+        run's last round says, without the run: no agent, no session, no file
+        changed but the evidence (orchestrate.check). The tests and the call to H'
+        take a while, so it works off the Tk thread; the verdict goes to Guidance,
+        which leaves whatever is in the editor alone."""
+        if self._run_busy("A check"):
+            return
+        if self._checking:
+            self._set(self.guidance, "A check is already running.")
+            return
+        path = Path(self.root_dir) / "TASK.md"
+        if not path.is_file():
+            self._set(self.guidance, f"No goal to check against: {path} does not exist. "
+                                     "Build > Edit Goal (TASK.md)... writes one.")
+            return
+        task, root = path.read_text(encoding="utf-8"), self.root_dir
+        self._checking = True
+        self._set(self.guidance, "Checking against TASK.md: E runs the tests and the gate, "
+                                 "then -- on a green floor -- H' reads the goal against the "
+                                 "result. This takes a moment ...")
+
+        def work() -> None:
+            try:
+                result, error = orchestrate.check(root, task), None
+            except Exception as exc:  # noqa: BLE001 -- said in Guidance
+                result, error = None, f"{type(exc).__name__}: {exc}"
+            self.after(0, self._check_done, result, error)
+        threading.Thread(target=work, daemon=True).start()
+
+    def _check_done(self, result: dict | None, error: str | None) -> None:
+        self._checking = False
+        self._reload_quiet()     # the tests recorded evidence, the gate may have cleared
+        self._update_requests_badge()
+        if error:
+            self._set(self.guidance, f"The check could not finish: {error}")
+            return
+        self._set(self.guidance, orchestrate.check_text(result) + "\n\n"
+                  + self._CHECK_SAID.get(result["verdict"], ""))
+
     def start_run(self) -> None:
         """Hand the AUTHORSHIP of intent to an agent, for this project, now.
 
@@ -1964,6 +2019,9 @@ class Cockpit(tk.Tk):
         between rounds, and you review it afterwards (engine/unsupervised.py)."""
         if self._run:
             self._set(self.guidance, "A run is already in progress in this cockpit.")
+            return
+        if self._checking:
+            self._set(self.guidance, "A check is running -- start the run when it is done.")
             return
         dialog = RunDialog(self, self.root_dir, orchestrate.blockers(self.root_dir),
                            delegated=autonomy.delegated(self.root_dir))
@@ -2056,6 +2114,7 @@ class Cockpit(tk.Tk):
                 self.after(0, self._run_round, st, event)
             elif runlog.outcome(event):
                 st["outcome"] = runlog.outcome(event)
+                st["why"] = event.get("why") or ""
                 st["review"] = event.get("review") or []
         st["proc"].wait()
         self.after(0, self._run_finished, st)
@@ -2095,6 +2154,8 @@ class Cockpit(tk.Tk):
             pass
         self._reload_quiet()
         said = self._RUN_ENDED.get(outcome, f"The run ended: {outcome}.")
+        if st.get("why"):
+            said += f"\nWhy: {st['why']}"
         review = st.get("review") or []
         if review:
             said += (f"\nUnsupervised, H' decided {len(review)} thing(s) in your place -- "

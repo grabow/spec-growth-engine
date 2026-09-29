@@ -273,15 +273,30 @@ def classify(nodes: dict[str, dict], node_id: str, new: dict | None) -> dict:
             reasons.append(("SOFT", f"field {key!r} changed (unclassified field)"))
     if prose_changed:
         reasons.append(("NONE", "prose changed"))
-    change["diff"] = _diff(old, new)
+    change["diff"] = _diff(old, new, change)
     return _finish(change)
 
 
-def _diff(old: dict, new: dict) -> dict[str, dict]:
-    """{key: {removed, added}} for every contract key and every SOFT or AUTO field
-    that moved. The reasons say THAT something changed and which gate that means;
-    H, asked to clear it, has to see WHAT changed -- a reworded entry is one
-    removed and one added."""
+def _diff(old: dict, new: dict, change: dict) -> dict[str, dict]:
+    """{key: {gate, removed, added}} for every contract key and every SOFT or AUTO
+    field that moved. The reasons say THAT something changed and which gate that
+    means; H, asked to clear it, has to see WHAT changed -- a reworded entry is
+    one removed and one added -- and which part of it is the reason for the gate:
+    each key carries the gate its own change falls under, by the same rules the
+    reasons follow."""
+    broken = change.get("breaking_gate", "SOFT")
+
+    def gate_of(key: str, removed: list) -> str:
+        if key in _DIFF_FIELDS:
+            return _FIELD_GATES[key]
+        if _is_root(old):
+            return "HARD"                     # the root's contract reaches every spine
+        if key == _PROVIDES:
+            return broken if removed else "SOFT"
+        if key == _CRITERIA:
+            return "SOFT"
+        return broken                         # any other key changed: breaking, fail safe
+
     before, after = _contract(old), _contract(new)
     keys = [k for k in _CONTRACT_ORDER if k in before or k in after]
     keys += sorted((set(before) | set(after)) - set(keys))
@@ -291,7 +306,7 @@ def _diff(old: dict, new: dict) -> dict[str, dict]:
     for key, was, now in pairs:
         removed, added = [e for e in was if e not in now], [e for e in now if e not in was]
         if removed or added:
-            out[key] = {"removed": removed, "added": added}
+            out[key] = {"gate": gate_of(key, removed), "removed": removed, "added": added}
     return out
 
 
@@ -364,6 +379,7 @@ def _contract_diff(old: dict, new: dict, change: dict) -> None:
         reasons.append(("NONE", "nothing depends on it and it is not declared protected: "
                                 "if its consumers sit outside the graph, add "
                                 f"`{PROTECTED_FIELD}: true`"))
+    change["breaking_gate"] = gate      # what the diff marks a breaking key with
     for what in breaking:
         reasons.append((gate, f"{BREAKING}{what} -- {who}"))
 
@@ -486,9 +502,11 @@ def report(change: dict, reach: dict | None = None) -> str:
     if change.get("purpose"):
         lines.append(f"purpose: {change['purpose']}")
     if change.get("diff"):
-        lines.append("what changed (- before, + after):")
-        for key, moved in change["diff"].items():
-            lines.append(f"  {key}")
+        lines.append("what changed (- before, + after; each part under its gate -- "
+                     "the change takes the highest):")
+        parts = sorted(change["diff"].items(), key=lambda kv: -GATES.index(kv[1]["gate"]))
+        for key, moved in parts:
+            lines.append(f"  [{moved['gate']}] {key}")
             entries = ([("-", e) for e in moved["removed"]]
                        + [("+", e) for e in moved["added"]])
             for sign, entry in entries[:_DIFF_SHOWN]:

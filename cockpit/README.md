@@ -256,8 +256,11 @@ while it runs   one line per event in the Run window, the same the log shows
                 it)": a run's drafts never pass it, and a change you can
                 not see take effect should not be settable
 when it ends    the outcome in plain words -- done | asking | blocked | stalled |
-                limit | unchecked | error -- and for `asking`, the Requests
-                window opens, because that is where the question is.
+                limit | unchecked | error -- and why, and for `asking`, the
+                Requests window opens, because that is where the question is.
+                A run that crashes ends too, as `error`: the reason, where it
+                was raised and the traceback go into the window AND into
+                .sge/runs/NN.log -- not only to stderr
                 Unsupervised, it also says how many things H' decided in your
                 place, and opens Requests for those too: each is an ADR in
                 ARCHITECTURE.md, a pending change you accept to keep it or
@@ -589,6 +592,15 @@ deleted from the cockpit:
   editor, with the same **Suggest with P**: the planner proposes a fuller goal
   from what is there, in the editor, and only Save writes it. For a goal that
   turned out too thin -- before a run, not after it.
+- **Check Goal (TASK.md)** (Build menu) - does the project meet its goal, as it
+  stands? E runs the tests and the gate, and on a green floor H' checks the
+  result against `TASK.md` -- what a run's last round says, without the run: no
+  agent, no session, nothing changed but the recorded test evidence. The verdict
+  goes to Guidance: **done** (green, no gap, nothing waits for you), **gaps**
+  (with the list), **asking** (something waits in Requests -- a pending HARD
+  change counts too), **red** (the failing tests and gate errors; H' is not
+  asked) or **unchecked** (H' not reachable). The use: after you worked through
+  the Requests, or changed something by hand. Headless: `cli.py check ROOT`.
 - **Refresh Manuals** - renders `AGENTS.md` and `ORCHESTRATOR.md` again from the
   method's templates, after they changed. The copies are generated: an edit to
   them belongs in the template. Headless: `cli.py manuals ROOT`.
@@ -687,7 +699,9 @@ removed, dependents = nodes.delete_node("api.discount", n)       # recursive=Tru
    and Revise show the same report in Guidance. Below its reasons the report
    says WHAT changed, entry by entry (`-` before, `+` after), for every contract
    key and for the SOFT and AUTO fields (`code`, `depends_on`, `status`, ...) --
-   whatever the gate; `design` and the prose, which gate nothing, stay out.
+   whatever the gate; `design` and the prose, which gate nothing, stay out. Each
+   part carries its own gate, HARD first (`[HARD] invariants`, `[SOFT] provides`,
+   `[AUTO] depends_on`): the change takes the highest, and Accept clears all of it.
 4. **Build context** (optional) - a read-only preview of the scoped bundle C gets:
    ARCHITECTURE.md (global invariants) + ancestor contracts (short) + target spec
    (full) + own code + dependency contracts (one hop). To change what C gets,

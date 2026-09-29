@@ -85,8 +85,9 @@ engine/            deterministic, authors no intent
   changeset.py     change set: which gate a SPEC.md change falls under (HARD/SOFT/AUTO/
                    NONE) + consumer impact: who depends on it, who mentions what was
                    removed, which evidence was recorded against the old contract;
-                   declared protected zones (`protected: true`) become HARD on a
-                   breaking change
+                   and what changed, entry by entry (- before, + after), each part
+                   under its own gate, HARD first; declared protected zones
+                   (`protected: true`) become HARD on a breaking change
   accepted.py      the accepted state (.sge/accepted.json) a headless change set is
                    measured against: E accepts <= SOFT on a passing gate, H accepts
                    HARD; a pending HARD change blocks nothing but keeps its nodes
@@ -131,11 +132,15 @@ orchestrate.py     run I in rounds, in any project: a session, E's floor, the go
                    or `codex exec resume` the same session with what is missing;
                    --unsupervised has H' stand in for H between rounds (needs the
                    delegation on); CoderWatch passes on what C is doing while I
-                   waits on it; blockers() says what a run still needs
+                   waits on it; blockers() says what a run still needs; a crash
+                   ends the run as `error`, with its reason and traceback in the
+                   record; check() is the goal check WITHOUT a run -- E's floor and
+                   H' against TASK.md, no agent (done | gaps | asking | red | unchecked)
 runlog.py          one readable line per event of a run's stream -- rendered once,
                    for the cockpit's Run window and the run's log (.sge/runs/NN.log)
 cli.py             headless gate: validate | drift | gate | init (lay a floor; --like OLD) |
                    manuals (render them again) | run (an agent, in rounds) |
+                   check (E + H' against TASK.md, no agent) |
                    pending (H's inbox: waivers, decisions, HARD changes, delegated) | prepare |
                    decide | accept | reject | delegate | test | draft | revise | code | intents |
                    duplicates | index | install-hook
@@ -148,27 +153,35 @@ testrun.py         run the project's tests at the build root -> test evidence
 ## Surface
 
 ```text
-GUI menus   Project  Open · New Project (lays the floor) · Reload
-            Node     Show Tree · New Node · Delete Node · Edit Arch · Save Arch
-            Spec     Load Spec · Save Spec · Build Context · Codex · Run Tests ·
-                     Start Run... (an agent writes the intent, in rounds)
+GUI menus   Open     Open · New Project... (lays the floor) · New Project Like... ·
+                     Refresh Manuals · Reload
+            Node     Show Tree · New Node · Delete Node
+            Arch     Edit Arch · Save Arch
+            Spec     Load Spec · Save Spec
+            Build    Build Context (a read-only preview) · Codex (builds the context
+                     itself, from the saved specs) · Run Tests · Edit Goal (TASK.md)... ·
+                     Check Goal (TASK.md) (E + H', no agent) · Start Run... (an agent
+                     writes the intent, in rounds) · Show Run Window
             Validate Requests... · Validate · Drift · Generate Index · Install Git Hook
-            Capability  Find Capability · Duplicates · Claim Capability
+            Registry Find Capability · Duplicates · Claim Capability
 GUI extras  Requests (n): H's inbox -- grant/reject waivers, accept/resolve/reject
             decision requests, prepare/accept/reject pending HARD changes;
             nodes awaiting H are amber in the graph
+            Target box: picking a node loads its SPEC.md (asks before an unsaved
+            spec in the editor goes) ·
             Draft ⟶ / Revise → · autonomy slider (D0..D2, the draft gate) ·
             the delegation switch beside it (per project, on | off) · node graph window
             (zoom, collapse, dependency edges) · Codex window with status bar
             Run window: one line per round (claim, floor, gaps, what it asks H),
             the cockpit re-reads the graph after every round, Draft, Revise,
             Save and the slider are locked while it writes, and the end says
-            which outcome it was; Close hides the window, Build > Show Run
-            Window brings it back
+            which outcome it was, and why; Close hides the window, Build > Show
+            Run Window brings it back
 CLI         uv run python cli.py {validate|drift|gate|pending|prepare|decide|test|duplicates|index|install-hook} [ROOT]
             uv run python cli.py accept ROOT ID... | --all [--by NAME]
             uv run python cli.py reject ROOT ID... --reason TEXT [--by NAME]
             uv run python cli.py delegate ROOT [on|off] [--by NAME]
+            uv run python cli.py check ROOT [--task FILE]   (E + H' against TASK.md, no agent)
             uv run python cli.py draft ROOT ID --parent P --kind K --intent TEXT
             uv run python cli.py revise ROOT ID --change TEXT
             uv run python cli.py code ROOT ID [--instruction TEXT]

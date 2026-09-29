@@ -231,6 +231,8 @@ H'    on a green floor only: checks TASK.md -- every statement of what the
 E     decides, deterministically (engine/iteration.py):
 
   the session failed                 stop    error
+  the run itself raised              stop    error      the reason, where, and the
+                                                        traceback, in the record
   a resumed round did no work        stop    stalled    I only talked: H decides
   the floor is red                   resume             with E's failures; H' is not asked
   floor green, H' names gaps         resume             with the gaps
@@ -255,6 +257,23 @@ review. (Unsupervised, H' also decides in H's place, between rounds -- below.) A
 wrong is not argued round after round: I says why and ends with `BLOCKED`, and
 H decides; a resumed round that runs no command ends the run as stalled.
 `MAX_ROUNDS` caps the cost; `MAX_ROUNDS=1` is a run without rounds.
+
+**The goal check, without a run.** The two instances that end every round --
+E's floor, then H′ against TASK.md -- are H's to call on their own, with no
+agent and no session (orchestrate.check; the cockpit's Build > Check Goal,
+`cli.py check ROOT`): after H worked through the requests, or changed something
+by hand. Nothing is written but what the tests and the gate always record. Its
+verdict:
+
+```text
+  red        the tests or the gate fail -- H' is not asked about a red floor
+  gaps       green, and H' names what TASK.md asks for and the graph lacks
+  asking     green, no gap, and something waits for H -- ANY of it: a pending
+             HARD change or a waiver too, not only the decision requests a run
+             stops on, because `done` here is to mean nothing waits for you
+  done       green, no gap, nothing waits
+  unchecked  green, and H' cannot be reached
+```
 
 A run breaks the rule that *agents author no intent*, for node-level intent
 only; GOVERNANCE §6 states the exception and its bounds. It is an operating mode,
@@ -349,6 +368,8 @@ run: P revises a spec for I                 cli.cmd_revise
 run: C implements a node for I              cli.cmd_code
 run: rounds -- the session, resumed         orchestrate.run
 run: H' checks the goal against TASK.md     agent.reviewer.check_goal
+goal check without a run: E, then H'        orchestrate.check
+run: a crash ends it as `error`, with why   orchestrate._ended_by
 run: the rule -- stop, or resume            engine.iteration.decide
 run: started in the cockpit                 app.Cockpit.start_run
 run: what it needs before it can start      orchestrate.blockers
@@ -463,11 +484,16 @@ Built     classify: the gate a proposed SPEC.md falls under, with every reason.
           impact: the declared consumers, which of them MENTION a removed
             operation (spec + owned code), and which evidence was recorded
             against the old contract.
+          diff: what changed, entry by entry (- before, + after), for every
+            contract key and the SOFT and AUTO fields, each part under its
+            own gate, HARD first -- the change takes the highest. Design and
+            prose, which gate nothing, stay out.
 Wired     D2 escalates a HARD change set whatever H' said; Save asks H to
           confirm a HARD one with the report in front of it; Draft and Revise
           show the report. Same report whatever the switches say.
 Limits    - "breaking" is read off TEXT and fails safe: an invariant cannot be
-            told apart as tightened or widened, so any change to one breaks.
+            told apart as tightened or widened, so any change to one breaks --
+            which is why the report shows the entries: H reads which.
           - "which expectations the diff violates" is approximated by a name
             search. A consumer is listed whenever it DECLARES the dependency; a
             mention is extra evidence, no mention is not proof of safety.

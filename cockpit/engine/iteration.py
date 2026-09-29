@@ -14,6 +14,8 @@ E's and deterministic, decides: stop, or resume the SAME session
 (`codex exec resume`) with what is missing.
 
   the session failed                 stop    error
+  the run itself raised              stop    error      the reason, where, and the
+                                                        traceback, in the record
   a resumed round did no work        stop    stalled    I only talked: H decides
   the floor is red                   resume             with E's failures; H' is not asked
   floor green, H' names gaps         resume             with the gaps

@@ -51,6 +51,7 @@ import subprocess
 import sys
 import threading
 import time
+import traceback
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -135,6 +136,60 @@ def goal(root: str, task: str, fl: dict, previous: list[str] = ()) -> dict:
                                   "waiting": len(result.get("waiting") or []),
                                   "closed": len(result.get("closed") or [])})
     return result
+
+
+def check(root: str, task: str, *, check_floor=floor, check_goal=goal) -> dict:
+    """The goal check WITHOUT an agent: what a run's last round says about the
+    project as it stands -- E measures, and on a green floor H' checks it against
+    TASK.md -- with no intent author to spend a session or touch a file. Nothing
+    is written but what the tests and the gate always record (the evidence, the
+    SOFT changes E clears) and the audit log.
+
+    {"verdict": red | gaps | asking | done | unchecked, "why", "failures", "gaps",
+     "waiting", "closed", "summary", "requests", "model"}. `requests` is every
+    thing waiting for H -- a pending HARD change and a waiver too, not only the
+    decision requests a run stops on: `done` is to mean nothing waits for you."""
+    from engine import inbox
+    fl = check_floor(root)
+    waits = [f"{it['type']:8} {it['node']} -> {it['subject']}"
+             for it in inbox.pending(parser.load_nodes(root), root)]
+    out = {"failures": [], "gaps": [], "waiting": [], "closed": [], "summary": "",
+           "requests": waits, "model": ""}
+    if not fl["green"]:
+        return {**out, "verdict": "red", "failures": iteration.failures(fl),
+                "why": "the tests or the gate fail -- H' is not asked about a red floor"}
+    gl = check_goal(root, task, fl)
+    if "unavailable" in gl:
+        return {**out, "verdict": "unchecked",
+                "why": f"the floor is green, but H' could not check the goal: "
+                       f"{gl['unavailable']}"}
+    out.update(gaps=gl.get("gaps") or [], waiting=gl.get("waiting") or [],
+               closed=gl.get("closed") or [], summary=gl.get("summary") or "",
+               model=gl.get("model") or "")
+    if out["gaps"]:
+        return {**out, "verdict": "gaps",
+                "why": f"the floor is green, but H' names {len(out['gaps'])} gap(s) "
+                       "against TASK.md"}
+    if waits or out["waiting"]:
+        return {**out, "verdict": "asking",
+                "why": "nothing is missing, but something waits for you"}
+    return {**out, "verdict": "done",
+            "why": "the tests and the gate pass, H' finds no gap, nothing waits for you"}
+
+
+def check_text(result: dict) -> str:
+    """The check, one line per finding -- for the cockpit and `cli.py check`."""
+    lines = [f"CHECK     {result['verdict'].upper()} -- {result['why']}"]
+    lines += [f"failing   {x}" for x in result["failures"]]
+    lines += [f"gap       {x}" for x in result["gaps"]]
+    lines += [f"waits H   {x}" for x in result["waiting"]]
+    lines += [f"asks H    {x}" for x in result["requests"]]
+    lines += [f"closed    {x}" for x in result["closed"]]
+    if result["summary"]:
+        lines.append(f"H' says   {result['summary']}")
+    if result["model"]:
+        lines.append(f"checked   by H' ({result['model']}) against TASK.md")
+    return "\n".join(lines)
 
 
 UNSUPERVISED_NOTE = ("This run is UNSUPERVISED: nobody but H' answers your decision "
@@ -303,7 +358,7 @@ class CoderWatch:
 def run(root: str, task: str, prompt: str, max_rounds: int = iteration.MAX_ROUNDS, *,
         out=None, start=session, check_floor=floor, check_goal=goal,
         command=None, unsupervised: bool = False, stand_in_h=stand_in,
-        watch=CoderWatch) -> str:
+        watch=CoderWatch, progress: dict | None = None) -> str:
     """The rounds. Returns how the run ended: done | asking | blocked | stalled |
     error | unchecked | limit (engine/iteration.py). Unsupervised, H' stands in
     for H after every measured round (stand_in_h), before the goal is checked."""
@@ -317,6 +372,8 @@ def run(root: str, task: str, prompt: str, max_rounds: int = iteration.MAX_ROUND
     text, thread, round_no = prompt, None, 1
     named: list[str] = []          # the gaps H' named last round, for its memory
     while True:
+        if progress is not None:
+            progress["round"] = round_no      # which round a crash happened in
         watching = watch(root, out) if watch else None
         if watching:
             watching.start()
@@ -480,6 +537,25 @@ def after(root: str) -> list[str]:
     return out
 
 
+def _ended_by(record, exc: Exception, round_no: int) -> int:
+    """A run that ends in an exception still ENDS: one `sge.run` event, outcome
+    `error`, with the reason and where it was raised -- into the window, and into
+    .sge/runs/NN.log, which the traceback on stderr never reached (a run that
+    crashed in round 1 read there like one that simply stopped). A RuntimeError
+    or OSError is a role that cannot be reached or started, said by its message:
+    exit 2. Anything else is a crash, with its traceback: exit 1."""
+    where = traceback.extract_tb(exc.__traceback__)[-1] if exc.__traceback__ else None
+    at = f" ({Path(where.filename).name}:{where.lineno}, {where.name})" if where else ""
+    expected = isinstance(exc, RuntimeError | OSError)
+    when = f"in round {round_no}" if round_no else "before its first round"
+    why = f"the run {'stopped' if expected else 'crashed'} {when}: {type(exc).__name__}: {exc}{at}"
+    tb = "" if expected else "".join(traceback.format_exception(exc)).rstrip()
+    _emit(record, {"type": "sge.run", "outcome": "error", "rounds": max(round_no - 1, 0),
+                   "why": why, **({"traceback": tb} if tb else {})})
+    record.close()
+    return 2 if expected else 1
+
+
 def _load_env() -> None:
     try:
         from dotenv import load_dotenv
@@ -514,17 +590,12 @@ def main(argv: list[str] | None = None) -> int:
     stem.with_suffix(".roles").write_text(roles_text(mode, args.max_rounds, args.task),
                                           encoding="utf-8")
     record = Record(stem, sys.stdout, readable=args.readable)
+    progress = {"round": 0}
     try:
         outcome = run(root, task, args.prompt, args.max_rounds, out=record,
-                      unsupervised=args.unsupervised)
-    except RuntimeError as exc:
-        print(f"intent unavailable: {exc}", file=sys.stderr)
-        record.close()
-        return 2
-    except OSError as exc:
-        print(f"intent could not start: {exc}", file=sys.stderr)
-        record.close()
-        return 2
+                      unsupervised=args.unsupervised, progress=progress)
+    except Exception as exc:  # noqa: BLE001 -- how the run ended belongs in its record
+        return _ended_by(record, exc, progress["round"])
     _emit(record, {"type": "sge.after", "lines": after(root)})
     record.close()
     return 0 if outcome == "done" else 1

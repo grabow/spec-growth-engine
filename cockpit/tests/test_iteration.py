@@ -362,7 +362,8 @@ def test_the_exit_code_says_whether_the_run_ended_done(tmp_path, monkeypatch):
     monkeypatch.setattr(orchestrate, "_load_env", lambda: None)
     seen = {}
     monkeypatch.setattr(orchestrate, "after", lambda root: ["test      PASS"])
-    monkeypatch.setattr(orchestrate, "run", lambda root, t, prompt, rounds, out, unsupervised:
+    monkeypatch.setattr(orchestrate, "run",
+                        lambda root, t, prompt, rounds, out, unsupervised, progress:
                         seen.update(task=t, prompt=prompt, rounds=rounds,
                                     unsupervised=unsupervised) or "done")
     assert orchestrate.main([str(tmp_path), "go", "--task", str(task), "--max-rounds", "3"]) == 0
@@ -377,6 +378,34 @@ def test_the_exit_code_says_whether_the_run_ended_done(tmp_path, monkeypatch):
         raise RuntimeError("no model for the intent")
     monkeypatch.setattr(orchestrate, "run", unavailable)
     assert orchestrate.main([str(tmp_path), "go", "--task", str(task)]) == 2
+    log = (runs / "03.log").read_text(encoding="utf-8")
+    assert ("RUN       ERROR after 0 round(s): the run stopped before its first round: "
+            "RuntimeError: no model for the intent") in log
+    assert "Traceback" not in log               # a role that cannot start: its message says it
+
+
+def test_a_crash_ends_the_run_with_its_reason_in_the_record(tmp_path, monkeypatch):
+    """The run that mixed an old llm.py with a new reviewer.py crashed after I's
+    work with a TypeError on stderr -- its NN.log just stopped, and the cockpit
+    said "error" and nothing else. A crash is an end like any other: `sge.run`,
+    outcome error, the reason and where, and the traceback in the record."""
+    task = tmp_path / "TASK.md"
+    task.write_text("# Task", encoding="utf-8")
+    monkeypatch.setattr(orchestrate, "_load_env", lambda: None)
+
+    def crashes(root, t, prompt, rounds, out, unsupervised, progress):
+        progress["round"] = 2
+        return {}["the goal check"]
+    monkeypatch.setattr(orchestrate, "run", crashes)
+    assert orchestrate.main([str(tmp_path), "go", "--task", str(task)]) == 1
+    runs = tmp_path / ".sge" / "runs"
+    log = (runs / "01.log").read_text(encoding="utf-8")
+    assert ("RUN       ERROR after 1 round(s): the run crashed in round 2: "
+            "KeyError: 'the goal check' (test_iteration.py:") in log
+    assert "          Traceback (most recent call last):" in log
+    last = json.loads((runs / "01.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert last["type"] == "sge.run" and last["outcome"] == "error"
+    assert "KeyError" in last["traceback"]
 
 
 # ---- a question the work rests on ------------------------------------------------
@@ -653,3 +682,66 @@ def test_the_digest_shows_what_c_is_doing():
     from runlog import lines
     shown = lines({"type": "sge.coder", "node": "core.rules", "line": "writing match.py"})
     assert shown == ["C core.rules   writing match.py"]
+
+
+# ---- the goal check: a run's last word, without the run --------------------------
+
+def _check(root, floor_result, goal_result=None):
+    asked = []
+
+    def goal(r, task, fl, previous=()):
+        asked.append(task)
+        return goal_result
+    result = orchestrate.check(str(root), "# Task", check_floor=lambda r: floor_result,
+                               check_goal=goal)
+    return result, asked
+
+
+def test_the_check_on_a_red_floor_does_not_ask_h_prime(graph_root):
+    result, asked = _check(graph_root, _RED)
+    assert result["verdict"] == "red" and not asked
+    assert "orphan code: svc/x.py" in result["failures"]
+    assert orchestrate.check_text(result).startswith("CHECK     RED -- ")
+
+
+@pytest.mark.parametrize("goal,verdict", [
+    ({"gaps": ["no test for a--b"], "waiting": [], "closed": [], "model": "m"}, "gaps"),
+    ({"gaps": [], "waiting": ["the root contract is H's"], "closed": [], "model": "m"},
+     "asking"),
+    ({"gaps": [], "waiting": [], "closed": ["a--b is tested"], "model": "m"}, "done"),
+    ({"unavailable": "no key"}, "unchecked"),
+])
+def test_the_check_on_a_green_floor_is_h_primes_verdict(graph_root, goal, verdict):
+    result, asked = _check(graph_root, _GREEN, goal)
+    assert asked == ["# Task"] and result["verdict"] == verdict
+    text = orchestrate.check_text(result)
+    assert text.startswith(f"CHECK     {verdict.upper()} -- ")
+    for gap in goal.get("gaps") or []:
+        assert f"gap       {gap}" in text
+
+
+def test_done_means_nothing_waits_not_even_a_pending_hard_change(graph_root):
+    """A run stops `asking` only on a decision request; the check is H's own look,
+    so ANYTHING waiting for H -- here a decision request -- keeps it from `done`."""
+    spec = graph_root / "api" / "hello" / "SPEC.md"
+    spec.write_text(spec.read_text(encoding="utf-8").replace(
+        "\n---", "\ndecision_requests:\n  - {target: ARCHITECTURE.md, proposal: 'ADR: x.', "
+                 "reason: y}\n---", 1), encoding="utf-8")
+    result, _ = _check(graph_root, _GREEN, {"gaps": [], "waiting": [], "closed": [],
+                                            "model": "m"})
+    assert result["verdict"] == "asking"
+    assert any("api.hello -> ARCHITECTURE.md" in r for r in result["requests"])
+
+
+def test_cli_check_says_done_with_0_and_needs_a_goal(tmp_path, monkeypatch, capsys):
+    import cli
+    monkeypatch.setattr(cli, "_load_env", lambda: None)
+    assert cli.main(["check", str(tmp_path)]) == 2                  # no TASK.md
+    (tmp_path / "TASK.md").write_text("# Task", encoding="utf-8")
+    verdicts = iter(["done", "gaps"])
+    monkeypatch.setattr(orchestrate, "check", lambda root, task: {
+        "verdict": next(verdicts), "why": "w", "failures": [], "gaps": [], "waiting": [],
+        "closed": [], "summary": "", "requests": [], "model": ""})
+    assert cli.main(["check", str(tmp_path)]) == 0
+    assert cli.main(["check", str(tmp_path)]) == 1
+    assert "CHECK     GAPS -- w" in capsys.readouterr().out

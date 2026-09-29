@@ -311,6 +311,8 @@ def run_window():
     _check(not c.autonomy_scale.instate(["disabled"]), "the slider stayed off after the run")
     _check("(the draft gate)" in c.autonomy_label.cget("text"), c.autonomy_label.cget("text"))
     _check("Run ASKING" in c.guidance.get("1.0", "end"), c.guidance.get("1.0", "end"))
+    _check("Why: 1 decision request awaits H" in c.guidance.get("1.0", "end"),
+           "the cockpit did not say why the run ended")
     _check(any(w.title().startswith("Requests awaiting") for w in windows),
            "asking did not open the Requests window")
 
@@ -653,6 +655,45 @@ def codex_builds_its_context():
     _check("not saved" in said, said)
 
 
+def check_goal_says_the_verdict():
+    """Build > Check Goal: E and H' judge the project against TASK.md with no
+    agent. The verdict goes to Guidance -- the editor, and a draft in it, stay
+    as they are -- and nothing starts without a goal or during a run."""
+    import types
+    import app
+    c = _cockpit()
+    app.threading = types.SimpleNamespace(Thread=_InlineThread)
+    c.after = lambda ms, fn, *args: fn(*args)            # no mainloop to hand back to
+
+    c.check_goal()
+    said = c.guidance.get("1.0", "end")
+    _check("No goal to check against" in said, said)
+
+    (c.proj / "TASK.md").write_text("# Task\n", encoding="utf-8")
+    seen = []
+
+    def check(root, task):
+        seen.append(task)
+        return {"verdict": "gaps", "why": "H' names 1 gap(s) against TASK.md",
+                "failures": [], "gaps": ["no test for the tkinter window"], "waiting": [],
+                "closed": [], "summary": "", "requests": [], "model": "m"}
+    app.orchestrate.check = check
+    c._set(c.view, "---\nid: svc\nan unsaved draft\n---\n")
+    c.check_goal()
+    said = c.guidance.get("1.0", "end")
+    _check(seen == ["# Task\n"], f"checked against {seen}")
+    _check("CHECK     GAPS" in said and "gap       no test for the tkinter window" in said,
+           said)
+    _check("Start Run" in said, "the verdict did not say what to do next")
+    _check("an unsaved draft" in c.view.get("1.0", "end"), "the check replaced the editor")
+    _check(not c._checking, "the check never finished")
+
+    c._run = {"round": 1}                                 # a run in progress
+    c.check_goal()
+    _check(len(seen) == 1, "a check started during a run")
+    c._run = None
+
+
 def edit_goal_with_p():
     """For a project that exists: TASK.md in an editor, P's proposal in its place,
     written only by Save."""
@@ -695,7 +736,8 @@ SCENARIOS = {f.__name__: f for f in (badge, validate, grant, invalid_grant, stal
                                      new_project_over_a_floor_keeps_the_dialog,
                                      open_target_prepares_the_revise,
                                      picking_a_target_loads_its_spec,
-                                     codex_builds_its_context)}
+                                     codex_builds_its_context,
+                                     check_goal_says_the_verdict)}
 
 if __name__ == "__main__":
     SCENARIOS[sys.argv[1]]()

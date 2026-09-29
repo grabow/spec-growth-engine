@@ -25,7 +25,8 @@ TK_UNAVAILABLE = 77
                                       "new_project_over_a_floor_keeps_the_dialog",
                                       "open_target_prepares_the_revise",
                                       "picking_a_target_loads_its_spec",
-                                      "codex_builds_its_context"])
+                                      "codex_builds_its_context",
+                                      "check_goal_says_the_verdict"])
 def test_run_window(scenario):
     env = dict(os.environ, PYTHONPATH=str(COCKPIT))
     try:

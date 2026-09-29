@@ -417,7 +417,7 @@ no "consists-of" edge. Fed into every node's spine as the global invariants.
 Local (node-specific) invariants stay in that node's own contract.
 ```
 
-### 3.12 The goal (`TASK.md`) — CANONICAL, and only for a RUN
+### 3.12 The goal (`TASK.md`) — CANONICAL, for a RUN and the goal check
 
 ```text
 The goal, in prose, written by H: what is wanted, and how "done" would be
@@ -428,13 +428,18 @@ machine plays that role and cannot ask H at the moment an intent is written.
 A person working the cockpit needs none: the goal is in their head and leaves
 it one node at a time, as the intent they type. An orchestrated run (AUTONOMY.md,
 the run) needs one, because `codex exec` runs unattended and has nobody to ask.
+So does the GOAL CHECK -- H' judging the project against it, without a run --
+for whoever wants to know whether the goal is met.
 
 ```text
 lives      NEXT TO the spec root, never inside it. No node, no frontmatter.
            The gate does not know it: no drift check, no evidence, no accepted
            state -- it is the run's yardstick, not part of the graph.
 read by    I, to grow the graph; H', to check the goal after a round
-           (agent/reviewer.check_goal); H, to change what is wanted
+           (agent/reviewer.check_goal) -- or when H asks, with no run and no
+           agent: the goal check (orchestrate.check; the cockpit's Build >
+           Check Goal, `cli.py check ROOT`), E's floor first, H' on a green
+           one; H, to change what is wanted
 kinds of   three, and a task states them however it likes -- often under
 statement  headings like "What it must do", "What must hold", "Done means",
            sometimes as plain prose with no headings at all:
@@ -454,9 +459,9 @@ not        a specification. A behaviour written here binds nothing; the same
 
 It is the one document in the chain that nothing verifies: code is measured
 against tests, tests against acceptance criteria, specs against code -- and the
-task against the graph by E for what E can count and by H' for the rest, once at
-the end of a round. Change it and nothing flags which specs now contradict it;
-the next goal check is where that surfaces.
+task against the graph by E for what E can count and by H' for the rest, at the
+end of a round or when H asks for the goal check. Change it and nothing flags
+which specs now contradict it; the next goal check is where that surfaces.
 
 ## 4. Single-source-of-truth rule
 

@@ -325,7 +325,7 @@ def test_the_report_shows_a_reworded_invariant_before_and_after(graph_root):
     change = changeset.classify(nodes, "util", _edit(
         nodes, "util", contract__invariants=["logs to stdout, never to a file"]))
     assert change["gate"] == "HARD"                                   # consumed by api.hello
-    assert change["diff"]["invariants"] == {"removed": ["logs to stdout"],
+    assert change["diff"]["invariants"] == {"gate": "HARD", "removed": ["logs to stdout"],
                                             "added": ["logs to stdout, never to a file"]}
     report = changeset.report(change)
     assert "    - logs to stdout\n" in report + "\n"
@@ -339,13 +339,14 @@ def test_the_diff_shows_soft_and_auto_changes_too(graph_root):
                        contract__provides=["greet()", "wave()"],
                        depends_on=["util", "api"], status="verified")
     diff = change["diff"]
-    assert diff["provides"] == {"removed": [], "added": ["wave()"]}
+    assert diff["provides"] == {"gate": "SOFT", "removed": [], "added": ["wave()"]}
     assert diff["depends_on"]["added"] == ["api"]
-    assert diff["status"] == {"removed": [], "added": ["verified"]}   # the fixture had none
+    assert diff["status"] == {"gate": "AUTO", "removed": [],
+                              "added": ["verified"]}                # the fixture had none
     assert ("SOFT", "provides added (1)") in change["reasons"]       # short: the entry is below
     report = changeset.report(change)
-    assert "  provides\n    + wave()" in report
-    assert "  depends_on\n    + api" in report
+    assert "  [SOFT] provides\n    + wave()" in report
+    assert "  [AUTO] depends_on\n    + api" in report
 
 
 def test_the_diff_leaves_out_what_gates_nothing(graph_root):
@@ -369,3 +370,23 @@ def test_a_new_node_has_no_diff_its_promises_are_listed_instead(graph_root):
     change = changeset.classify(_nodes(graph_root), "x", new)
     assert change["diff"] == {}
     assert "it would provide (1):\n  - f()" in changeset.report(change)
+
+
+def test_each_part_of_the_diff_says_its_gate_and_the_hard_part_comes_first(graph_root):
+    """One report, three gates: the human asked about the HARD part must be able to
+    tell it from the SOFT and AUTO parts that came with it."""
+    change = _classify(graph_root, "util", contract__provides=["log()", "warn()"],
+                       contract__invariants=["never raises"], depends_on=["api"])
+    diff = change["diff"]
+    assert (diff["invariants"]["gate"], diff["provides"]["gate"],
+            diff["depends_on"]["gate"]) == ("HARD", "SOFT", "AUTO")   # util is consumed
+    parts = changeset.report(change).split("what changed", 1)[1]
+    order = [parts.index(f"\n  [{g}] {k}\n") for g, k in
+             (("HARD", "invariants"), ("SOFT", "provides"), ("AUTO", "depends_on"))]
+    assert order == sorted(order)
+
+
+def test_a_removed_promise_marks_its_key_breaking(graph_root):
+    change = _classify(graph_root, "util", contract__provides=["log(level)"])   # reworded
+    assert change["diff"]["provides"] == {"gate": "HARD", "removed": ["log()"],
+                                          "added": ["log(level)"]}

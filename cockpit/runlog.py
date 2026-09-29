@@ -47,9 +47,14 @@ def _rounds(ev: dict) -> list[str] | None:
         return [f"after     {first(line, 120)}" for line in ev.get("lines") or []]
     if kind == "sge.run":
         mode = "  (unsupervised)" if ev.get("mode") == "unsupervised" else ""
+        why = ev.get("why", "")
+        # a crash's reason is read in full, and its traceback with it: it is the
+        # one thing the record holds to find out what happened
         return ([f"RUN       {str(ev.get('outcome')).upper()} after "
-                 f"{ev.get('rounds')} round(s){mode}: {first(ev.get('why', ''))}"]
-                + [f"review H  {first(line)}" for line in ev.get("review") or []])
+                 f"{ev.get('rounds')} round(s){mode}: "
+                 f"{why if ev.get('traceback') else first(why)}"]
+                + [f"review H  {first(line)}" for line in ev.get("review") or []]
+                + [f"          {line}" for line in (ev.get("traceback") or "").splitlines()])
     return None
 
 

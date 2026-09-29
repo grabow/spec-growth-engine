@@ -89,6 +89,7 @@ uv run python cli.py init ~/work/notes --id notes --container app \
 uv run python cli.py gate ~/work/notes          # the commit gate: validate + drift
 uv run python cli.py install-hook ~/work/notes  # in a git repo: the gate on every commit
 uv run python cli.py run ~/work/notes           # an agent grows it, in rounds
+uv run python cli.py check ~/work/notes         # does it meet TASK.md? (H', no agent)
 ```
 
 The gate is offline and needs no key.

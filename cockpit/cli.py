@@ -26,6 +26,8 @@ git pre-commit hook can refuse a commit that drifts spec from code.
                                             # invariants, and record it as accepted
   uv run python cli.py init     ROOT --like OLD   # the same floor again, elsewhere
   uv run python cli.py manuals  ROOT        # re-render AGENTS.md / ORCHESTRATOR.md
+  uv run python cli.py check    ROOT [--task FILE]   # does it meet TASK.md? E measures,
+                                            # H' checks the goal -- no agent, nothing changed
   uv run python cli.py run      ROOT [--unsupervised] [--max-rounds N] [--task FILE]
                                             # an agent grows the graph, in rounds;
                                             # the record lands in ROOT/.sge/runs/
@@ -537,6 +539,21 @@ def cmd_run(root: str, task: str | None, max_rounds: int, unsupervised: bool) ->
                              *(["--unsupervised"] if unsupervised else [])])
 
 
+def cmd_check(root: str, task: str | None) -> int:
+    """Does the project meet its goal, as it stands? E runs the tests and the gate,
+    and on a green floor H' checks the result against TASK.md -- no agent, no
+    session, no file changed (orchestrate.check). 0 only for `done`."""
+    import orchestrate
+    path = Path(task) if task else Path(root) / "TASK.md"
+    if not path.is_file():
+        print(f"no goal to check against: {path} does not exist", file=sys.stderr)
+        return 2
+    _load_env()     # H' is configured in cockpit/.env
+    result = orchestrate.check(str(Path(root).resolve()), path.read_text(encoding="utf-8"))
+    print(orchestrate.check_text(result))
+    return 0 if result["verdict"] == "done" else 1
+
+
 def cmd_delegate(root: str, state: str | None, by: str | None) -> int:
     """Show the delegation, or -- H's act -- turn it on or off."""
     if state is None:
@@ -684,6 +701,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="out of scope: what nobody should grow; repeatable")
     sp = sub.add_parser("manuals")
     sp.add_argument("root")
+    sp = sub.add_parser("check")
+    sp.add_argument("root")
+    sp.add_argument("--task", help="the goal (default: ROOT/TASK.md)")
     sp = sub.add_parser("run")
     sp.add_argument("root")
     sp.add_argument("--task", help="the goal (default: ROOT/TASK.md)")
@@ -752,6 +772,8 @@ def main(argv: list[str] | None = None) -> int:
                         args.always, args.out_of_scope, like=args.like)
     if args.cmd == "manuals":
         return cmd_manuals(args.root)
+    if args.cmd == "check":
+        return cmd_check(args.root, args.task)
     if args.cmd == "run":
         if args.max_rounds < 1:
             print("error: --max-rounds must be at least 1", file=sys.stderr)
