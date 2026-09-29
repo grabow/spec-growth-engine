@@ -60,6 +60,7 @@ from __future__ import annotations
 
 import json
 import re
+import textwrap
 from pathlib import Path
 
 import frontmatter
@@ -86,6 +87,12 @@ _FIELD_GATES = {
     "design": "NONE", "decision_requests": "NONE",
 }
 _HANDLED = {"id", "kind", "parent", "contract", "waiver", PROTECTED_FIELD, *_FIELD_GATES}
+# what the report spells out entry by entry: every contract key, and the SOFT and
+# AUTO fields. NONE fields (design, decision_requests) and the prose stay out --
+# long, and they gate nothing.
+_CONTRACT_ORDER = ("purpose", "provides", "invariants", "error_behavior",
+                   "acceptance_criteria")
+_DIFF_FIELDS = ("depends_on", "code", "excluded", "shared", "status")
 # the LEADING name only: 'TextReadError: ...; str() is ...' is about TextReadError,
 # and a `str(` further along is prose, not the thing provided
 _LEAD = re.compile(
@@ -186,8 +193,9 @@ def classify(nodes: dict[str, dict], node_id: str, new: dict | None) -> dict:
 
     Returns {node, kind, new_node, deleted, gate, breaking, protected, consumers,
              reasons: [(gate, why)], provides: {added, removed},
-             criteria: {added, removed}}. `kind` is the node's kind before the
-             change (after it, for a new node)."""
+             criteria: {added, removed}, diff: {key: {removed, added}}}. `kind`
+             is the node's kind before the change (after it, for a new node);
+             `diff` is empty for a new or deleted node."""
     raw = nodes.get(node_id)
     reasons: list[tuple[str, str]] = []
     # a subtree property: the node itself, or any ancestor, may declare it
@@ -200,6 +208,7 @@ def classify(nodes: dict[str, dict], node_id: str, new: dict | None) -> dict:
         "consumers": nodeops.dependents_of(nodes, node_id) if raw is not None else [],
         "provides": {"added": [], "removed": []},
         "criteria": {"added": [], "removed": []},
+        "diff": {},
     }
     if new is None:
         return _finish(_deletion(raw, change)) if raw is not None else _finish(change)
@@ -264,7 +273,26 @@ def classify(nodes: dict[str, dict], node_id: str, new: dict | None) -> dict:
             reasons.append(("SOFT", f"field {key!r} changed (unclassified field)"))
     if prose_changed:
         reasons.append(("NONE", "prose changed"))
+    change["diff"] = _diff(old, new)
     return _finish(change)
+
+
+def _diff(old: dict, new: dict) -> dict[str, dict]:
+    """{key: {removed, added}} for every contract key and every SOFT or AUTO field
+    that moved. The reasons say THAT something changed and which gate that means;
+    H, asked to clear it, has to see WHAT changed -- a reworded entry is one
+    removed and one added."""
+    before, after = _contract(old), _contract(new)
+    keys = [k for k in _CONTRACT_ORDER if k in before or k in after]
+    keys += sorted((set(before) | set(after)) - set(keys))
+    pairs = [(k, _entries(before.get(k)), _entries(after.get(k))) for k in keys]
+    pairs += [(k, _entries(old.get(k)), _entries(new.get(k))) for k in _DIFF_FIELDS]
+    out = {}
+    for key, was, now in pairs:
+        removed, added = [e for e in was if e not in now], [e for e in now if e not in was]
+        if removed or added:
+            out[key] = {"removed": removed, "added": added}
+    return out
 
 
 def _deletion(old: dict, change: dict) -> dict:
@@ -303,7 +331,8 @@ def _contract_diff(old: dict, new: dict, change: dict) -> None:
                           "removed": [p for p in old_p if p not in new_p]}
     breaking += [f"provides removed or reworded: {p}" for p in change["provides"]["removed"]]
     if change["provides"]["added"]:
-        reasons.append(("SOFT", "provides added: " + "; ".join(change["provides"]["added"])))
+        # the entries themselves are in the report's diff
+        reasons.append(("SOFT", f"provides added ({len(change['provides']['added'])})"))
 
     old_c, new_c = _entries(before.get(_CRITERIA)), _entries(after.get(_CRITERIA))
     change["criteria"] = {"added": [c for c in new_c if c not in old_c],
@@ -446,6 +475,7 @@ def summary(change: dict) -> str:
 
 
 _PROVIDES_SHOWN = 8       # a new node's promises, in full up to here
+_DIFF_SHOWN = 8           # a changed key's entries, in full up to here
 
 
 def report(change: dict, reach: dict | None = None) -> str:
@@ -455,6 +485,18 @@ def report(change: dict, reach: dict | None = None) -> str:
     lines += [f"  [{gate}] {why}" for gate, why in order] or ["  (no change)"]
     if change.get("purpose"):
         lines.append(f"purpose: {change['purpose']}")
+    if change.get("diff"):
+        lines.append("what changed (- before, + after):")
+        for key, moved in change["diff"].items():
+            lines.append(f"  {key}")
+            entries = ([("-", e) for e in moved["removed"]]
+                       + [("+", e) for e in moved["added"]])
+            for sign, entry in entries[:_DIFF_SHOWN]:
+                lines.append(textwrap.fill(entry, width=100, initial_indent=f"    {sign} ",
+                                           subsequent_indent="      "))
+            if len(entries) > _DIFF_SHOWN:
+                lines.append(f"    ... and {len(entries) - _DIFF_SHOWN} more "
+                             f"(the spec of {change['node']} has them all)")
     if change["new_node"]:
         # A new node has no "before" to diff against, so the reasons alone said
         # only THAT something arrived ("new container") -- never what it promises.

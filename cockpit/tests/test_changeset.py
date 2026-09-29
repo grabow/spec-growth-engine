@@ -313,3 +313,59 @@ def test_a_changed_node_still_leads_with_its_purpose(graph_root):
     report = changeset.report(change)
     assert "purpose: the logger" in report
     assert "it would provide" not in report, "not a new node: the diff says what changed"
+
+
+# ---- what changed, entry by entry ---------------------------------------------
+
+def test_the_report_shows_a_reworded_invariant_before_and_after(graph_root):
+    """'invariants changed' says THAT; H, asked to clear a HARD change, needs WHAT
+    -- the run that dropped "no sound" from core.window said only the first."""
+    nodes = _nodes(graph_root)
+    nodes["util"]["contract"]["invariants"] = ["logs to stdout"]
+    change = changeset.classify(nodes, "util", _edit(
+        nodes, "util", contract__invariants=["logs to stdout, never to a file"]))
+    assert change["gate"] == "HARD"                                   # consumed by api.hello
+    assert change["diff"]["invariants"] == {"removed": ["logs to stdout"],
+                                            "added": ["logs to stdout, never to a file"]}
+    report = changeset.report(change)
+    assert "    - logs to stdout\n" in report + "\n"
+    assert "    + logs to stdout, never to a file" in report
+
+
+def test_the_diff_shows_soft_and_auto_changes_too(graph_root):
+    """The gate decides WHO clears it, not what H gets to see: an added promise
+    (SOFT), a new dependency and a status (AUTO) are spelled out as well."""
+    change = _classify(graph_root, "api.hello",
+                       contract__provides=["greet()", "wave()"],
+                       depends_on=["util", "api"], status="verified")
+    diff = change["diff"]
+    assert diff["provides"] == {"removed": [], "added": ["wave()"]}
+    assert diff["depends_on"]["added"] == ["api"]
+    assert diff["status"] == {"removed": [], "added": ["verified"]}   # the fixture had none
+    assert ("SOFT", "provides added (1)") in change["reasons"]       # short: the entry is below
+    report = changeset.report(change)
+    assert "  provides\n    + wave()" in report
+    assert "  depends_on\n    + api" in report
+
+
+def test_the_diff_leaves_out_what_gates_nothing(graph_root):
+    """design and the prose are NONE: long, and nobody clears them."""
+    change = _classify(graph_root, "api.hello", design={"approach": "a new approach"})
+    assert change["diff"] == {}
+    assert "what changed" not in changeset.report(change)
+
+
+def test_a_long_diff_is_cut_with_a_count(graph_root):
+    many = [f"promise {i}()" for i in range(12)]
+    change = _classify(graph_root, "api.hello", contract__provides=["greet()", *many])
+    report = changeset.report(change)
+    assert "+ promise 7()" in report and "+ promise 8()" not in report
+    assert "... and 4 more (the spec of api.hello has them all)" in report
+
+
+def test_a_new_node_has_no_diff_its_promises_are_listed_instead(graph_root):
+    new = {"id": "x", "kind": "component", "parent": "api",
+           "contract": {"provides": ["f()"]}}
+    change = changeset.classify(_nodes(graph_root), "x", new)
+    assert change["diff"] == {}
+    assert "it would provide (1):\n  - f()" in changeset.report(change)

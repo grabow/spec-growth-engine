@@ -684,7 +684,10 @@ removed, dependents = nodes.delete_node("api.discount", n)       # recursive=Tru
    old contract. A **HARD** change set -- a breaking change to a consumed contract
    or to a container, a new container, an id/kind/parent change, the root contract,
    a waiver grant -- asks you to confirm with that report in front of you. Draft
-   and Revise show the same report in Guidance.
+   and Revise show the same report in Guidance. Below its reasons the report
+   says WHAT changed, entry by entry (`-` before, `+` after), for every contract
+   key and for the SOFT and AUTO fields (`code`, `depends_on`, `status`, ...) --
+   whatever the gate; `design` and the prose, which gate nothing, stay out.
 4. **Build context** (optional) - a read-only preview of the scoped bundle C gets:
    ARCHITECTURE.md (global invariants) + ancestor contracts (short) + target spec
    (full) + own code + dependency contracts (one hop). To change what C gets,
