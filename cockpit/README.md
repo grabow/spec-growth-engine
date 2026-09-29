@@ -125,8 +125,11 @@ bare    -           on          unsupervised  as above                          
                                                                                     delegation on
 ```
 
-**What D0, D1 and D2 mean.** You write what a node is for -- the intent -- and
-the planner P (a language model, set in `cockpit/.env`; the **Draft ⟶** button
+**What D0, D1 and D2 mean.** In one sentence: **the slider decides who clears a
+spec draft -- you alone, you with a second opinion, or, for a small (SOFT)
+change, H' itself.**
+
+In more words: you write what a node is for -- the intent -- and the planner P (a language model, set in `cockpit/.env`; the **Draft ⟶** button
 asks it) turns it into a SPEC.md: a draft. The draft gate says who looks at that
 draft before it is saved. (SOFT means the change adds something and breaks
 nothing -- a new component, a new operation, a new criterion. HARD means it
