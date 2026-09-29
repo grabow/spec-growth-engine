@@ -59,7 +59,9 @@ Requirements:
 
 - **Python 3.12** and [**uv**](https://docs.astral.sh/uv/) -- for everything.
 - **The Codex CLI** ([github.com/openai/codex](https://github.com/openai/codex),
-  the `codex` command: `npm install -g @openai/codex`) -- required for the
+  the `codex` command: `npm install -g @openai/codex`; 0.155 or newer, for
+  `--ignore-user-config` -- your own `~/.codex/config.toml` does not apply to
+  SGE's agents) -- required for the
   coder C (the cockpit's Codex button, `cli.py code`) and for agent runs, which
   run I and C on it. The cockpit, the gate, drafting and reviews do not need it.
 - **An OpenAI-compatible endpoint and key per role you use** -- see

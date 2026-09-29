@@ -3,8 +3,11 @@ against its OWN endpoint (agent/llm.py: SGE_<ROLE>_BASE_URL / _API_KEY / _MODEL)
 
 Codex is open source and speaks the same OpenAI-compatible API as the planner
 and the reviewer, so all four roles are configured the same way: a URL, a key,
-a model. The provider is defined ad hoc with `-c` overrides; ~/.codex/config.toml
-is neither needed nor touched.
+a model. The provider is defined ad hoc with `-c` overrides, and the user's own
+~/.codex/config.toml is NOT loaded (`--ignore-user-config`): whatever it says --
+a service tier, a reasoning effort, a model catalog, a notify hook -- would
+otherwise steer I and C too, differently on every machine, and cockpit/.env
+would not be the whole configuration it claims to be.
 
 The KEY never appears in the command -- only the NAME of the variable that
 holds it (`env_key`), set in the child's environment alone. That matters: the
@@ -53,6 +56,7 @@ def command(role: str, *, json_events: bool = False,
     # resume takes the same options, but after its own name
     argv = [
         "codex", "exec", *(["resume"] if resume else []), "--skip-git-repo-check",
+        "--ignore-user-config",        # cockpit/.env alone configures the role
         "--dangerously-bypass-approvals-and-sandbox",
         "-c", f'model_provider="{provider}"',
         "-c", f'model_providers.{provider}.name="{provider}"',

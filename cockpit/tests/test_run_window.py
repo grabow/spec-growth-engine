@@ -17,7 +17,8 @@ SCENARIOS = COCKPIT / "tests" / "gui_scenarios.py"
 TK_UNAVAILABLE = 77
 
 
-@pytest.mark.parametrize("scenario", ["run_window", "run_locks_the_writers",
+@pytest.mark.parametrize("scenario", ["run_window", "run_window_comes_back",
+                                      "run_locks_the_writers",
                                       "run_dialog_modes", "run_window_unsupervised",
                                       "new_project_scrolls", "new_project_suggests_a_goal",
                                       "edit_goal_with_p",

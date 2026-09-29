@@ -323,6 +323,23 @@ def test_the_codex_command_names_the_key_variable_never_the_key(monkeypatch):
     assert argv[argv.index("-m") + 1] == "some-model"
 
 
+def test_the_codex_command_ignores_the_users_codex_config(monkeypatch):
+    """~/.codex/config.toml is someone's own: a service tier, a reasoning effort,
+    a notify hook there must not steer I or C. cockpit/.env is the whole of it --
+    for a fresh session and for a resumed one."""
+    from agent import codex_cli
+    for role in ("CODER", "INTENT"):
+        monkeypatch.setenv(f"SGE_{role}_BASE_URL", "https://api.example/v1")
+        monkeypatch.setenv(f"SGE_{role}_API_KEY", "k")
+        monkeypatch.setenv(f"SGE_{role}_MODEL", "m")
+        monkeypatch.setenv(f"SGE_{role}_HARNESS", "codex-cli")
+    fresh, _ = codex_cli.command("coder")
+    resumed, _ = codex_cli.command("intent", json_events=True, resume="t-1")
+    for argv in (fresh, resumed):
+        assert "--ignore-user-config" in argv
+        assert argv.index("--ignore-user-config") < argv.index("-m")   # an option, not the prompt
+
+
 def test_c_never_gets_an_open_stdin(monkeypatch):
     """codex exec waits on an open stdin: the first smoke test hung until killed."""
     import subprocess

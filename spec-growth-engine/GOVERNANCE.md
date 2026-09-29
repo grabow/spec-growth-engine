@@ -106,9 +106,11 @@ SGE_<ROLE>_HARNESS     I and C only: the agent CLI that runs them -- codex-cli,
                        the Codex CLI (github.com/openai/codex), required for both
 <ROLE> = PLANNER | REVIEWER | INTENT | CODER
 
-unset:  nothing falls back -- not to another role, not to a provider. A role
-        without its three settings is not configured, and says which it
-        lacks. Two roles on the same model repeat the same values.
+unset:  nothing falls back -- not to another role, not to a provider, not
+        to the user's own ~/.codex/config.toml (I and C run with
+        --ignore-user-config). A role without its three settings is not
+        configured, and says which it lacks. Two roles on the same model
+        repeat the same values.
 wins:   a value already in the environment, so one run can override a role:
         SGE_CODER_MODEL=... uv run python cli.py run ROOT
 ```

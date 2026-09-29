@@ -46,7 +46,8 @@ example/   a tiny demo spec graph (checkout / payment / data)
 Python 3.12 (pinned via `.python-version`) and [uv](https://docs.astral.sh/uv/).
 For the coder C and for agent runs also the **Codex CLI**
 ([github.com/openai/codex](https://github.com/openai/codex), the `codex`
-command: `npm install -g @openai/codex`) -- see
+command: `npm install -g @openai/codex`; a version that knows
+`--ignore-user-config` -- 0.155 does) -- see
 [Models, endpoints and keys](#models-endpoints-and-keys-cockpitenv).
 
 ```sh
@@ -246,6 +247,10 @@ while it runs   one line per event in the Run window, the same the log shows
                 working run does not look like a stalled one; after every round
                 the cockpit re-reads the graph, so the tree and the Requests
                 count follow along
+                Close only HIDES the window -- the run goes on, and
+                Build > Show Run Window brings it back, during the run and
+                after it (a new run replaces it); the same lines are in
+                .sge/runs/NN.log, for `tail -f`
                 Draft, Revise and Save are OFF: an agent is writing those
                 files. The slider is greyed out too, "(a run drafts without
                 it)": a run's drafts never pass it, and a change you can
@@ -464,10 +469,16 @@ wrote, and every review says so: another model makes the review independent.
 **The two agents, on the Codex CLI.** The one harness there is, `codex-cli`, is
 the Codex CLI ([github.com/openai/codex](https://github.com/openai/codex)) --
 REQUIRED for I and C: install it with `npm install -g @openai/codex`, so that the
-`codex` command is on PATH. Both run as `codex exec`, pointed at their endpoint
-on the command line; `~/.codex/config.toml` is neither needed nor touched, and
-the key reaches codex only through its environment, never the command (which is
-logged). The cockpit's **Codex** button, `cli.py code` and every run start C the
+`codex` command is on PATH -- a version that knows `--ignore-user-config`
+(0.155 does). Both run as `codex exec`, pointed at their endpoint on the command
+line, with `--ignore-user-config`: your own `~/.codex/config.toml` is not
+loaded, so a service tier, a reasoning effort, a model catalog or a notify hook
+set there does not reach I or C -- `cockpit/.env` is the whole configuration,
+the same on every machine. The key reaches codex only through its environment,
+never the command (which is logged). One warning remains for models Codex has
+no metadata for (most that are not OpenAI's): "Model metadata for `...` not
+found. Defaulting to fallback metadata" -- Codex then assumes general defaults,
+e.g. for the context window; the run goes on. The cockpit's **Codex** button, `cli.py code` and every run start C the
 same way; without `codex` on PATH, Start a run... and `cli.py run` say so before
 anything starts. The cockpit, the gate, drafting and reviews need no Codex CLI.
 

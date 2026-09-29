@@ -315,6 +315,41 @@ def run_window():
            "asking did not open the Requests window")
 
 
+def run_window_comes_back():
+    """Close hides the run's window, it does not end it: Build > Show Run Window
+    brings back the same window with all it showed -- and a new run replaces it."""
+    import json
+    import types
+    import app
+    c = _cockpit()
+    app.threading = types.SimpleNamespace(Thread=_InlineThread)
+
+    c.show_run_window()
+    said = c.guidance.get("1.0", "end")
+    _check("No run" in said and ".sge" in said, said)
+
+    done = [json.dumps({"type": "sge.run", "outcome": "done", "rounds": 1, "why": "met"})]
+    c._open_run_window(_FakeRun(done), str(c.proj / "TASK.md"), 5)
+    _settle(c)
+    win = c._run_win
+    close = next(w for w in _walk(win) if isinstance(w, ttk.Button) and w.cget("text") == "Close")
+    close.invoke()
+    _check(win.winfo_exists(), "Close destroyed the run window")
+    win.tk.call(win.protocol("WM_DELETE_WINDOW"))           # the title bar's close button
+    _check(win.winfo_exists(), "the title bar's close destroyed the run window")
+
+    brought = []
+    win.deiconify = lambda: brought.append(True)            # a mapped window would take the focus
+    c.show_run_window()
+    _check(brought, "Show Run Window did not bring the window back")
+    shown = "\n".join(w.get("1.0", "end") for w in _walk(win) if isinstance(w, tk.Text))
+    _check("RUN DONE" in shown, shown)
+
+    c._open_run_window(_FakeRun(done), str(c.proj / "TASK.md"), 5)
+    _settle(c)
+    _check(not win.winfo_exists() and c._run_win is not win, "the old run window stayed")
+
+
 def run_locks_the_writers():
     """While a run writes, Draft and Revise say so instead of writing too."""
     c = _cockpit()
@@ -652,7 +687,8 @@ def _walk(w):
 
 SCENARIOS = {f.__name__: f for f in (badge, validate, grant, invalid_grant, stale,
                                      hard_accept, hard_reject,
-                                     run_window, run_locks_the_writers,
+                                     run_window, run_window_comes_back,
+                                     run_locks_the_writers,
                                      run_dialog_modes, run_window_unsupervised,
                                      new_project_scrolls, new_project_suggests_a_goal,
                                      edit_goal_with_p,

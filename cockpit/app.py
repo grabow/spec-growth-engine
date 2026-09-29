@@ -254,6 +254,7 @@ class Cockpit(tk.Tk):
         self.graph_zoom = 1.0
         self._graph_root: str | None = None  # root the view state belongs to
         self._run: dict | None = None        # the run in progress, if any
+        self._run_win: tk.Toplevel | None = None  # the last run's window, hidden or not
         self._save_config()  # persist the resolved root
         self._update_title()
         self.reload_nodes()
@@ -389,7 +390,8 @@ class Cockpit(tk.Tk):
         menu("Build", [("Build Context", self.build_ctx), ("Codex", self.run_agent),
                        ("Run Tests", self.run_tests_action), None,
                        ("Edit Goal (TASK.md)...", self.edit_goal),
-                       ("Start Run...", self.start_run)])
+                       ("Start Run...", self.start_run),
+                       ("Show Run Window", self.show_run_window)])
         menu("Validate", [("Requests...", self.show_requests), None,
                           ("Validate", self.run_validate), ("Drift", self.run_drift),
                           None, ("Generate Index", self.generate_index),
@@ -1983,14 +1985,23 @@ class Cockpit(tk.Tk):
 
     def _open_run_window(self, proc, task: str, rounds: int,
                          unsupervised: bool = False) -> None:
+        if self._run_win is not None:   # a new run, a new window: the last one goes
+            try:
+                self._run_win.destroy()
+            except tk.TclError:
+                pass
         win = tk.Toplevel(self)
         win.title(f"Run - {self.root_dir}")
         win.geometry("1000x700")
+        # Close only HIDES it -- the run goes on, and Build > Show Run Window
+        # brings back all of it, during the run and after, to read how it ended
+        win.protocol("WM_DELETE_WINDOW", win.withdraw)
+        self._run_win = win
         status = ttk.Label(win, anchor="w", font=MONO, foreground="#0a7d00")
         status.pack(side="top", fill="x", padx=4, pady=(4, 0))
         bar = ttk.Frame(win)
         bar.pack(side="bottom", fill="x", padx=4, pady=4)
-        ttk.Button(bar, text="Close", command=win.destroy).pack(side="right")
+        ttk.Button(bar, text="Close", command=win.withdraw).pack(side="right")
         out = ScrolledText(win, font=MONO, wrap="none")
         out.pack(side="top", fill="both", expand=True)
         out.insert("end", f"===== RUN{' (UNSUPERVISED)' if unsupervised else ''}   "
@@ -2005,9 +2016,27 @@ class Cockpit(tk.Tk):
                   "A run is in progress. It is unattended by definition: it writes specs "
                   "through P and code through C, and E and H' check every round.\n"
                   "Your way in is the Requests window, after a round -- Draft and Revise "
-                  "are locked while it writes.")
+                  "are locked while it writes.\n"
+                  "Closing the run's window only hides it: Build > Show Run Window "
+                  "brings it back.")
         threading.Thread(target=self._run_read, args=(proc.stdout, st), daemon=True).start()
         self._monitor_run(st)
+
+    def show_run_window(self) -> None:
+        """The window of the run in progress -- or of the last one, to read how it
+        ended -- back in front."""
+        win = self._run_win
+        try:
+            if win is not None and win.winfo_exists():
+                win.deiconify()
+                win.lift()
+                return
+        except tk.TclError:
+            pass
+        self._set(self.guidance,
+                  "No run in this cockpit session yet. Every run is recorded in "
+                  f"{Path(self.root_dir) / '.sge' / 'runs'}: NN.log holds what its window "
+                  "showed.")
 
     def _run_read(self, stream, st: dict) -> None:
         """Render the run's stream into its window (runlog.py -- the same lines

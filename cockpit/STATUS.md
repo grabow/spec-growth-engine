@@ -163,7 +163,8 @@ GUI extras  Requests (n): H's inbox -- grant/reject waivers, accept/resolve/reje
             Run window: one line per round (claim, floor, gaps, what it asks H),
             the cockpit re-reads the graph after every round, Draft, Revise,
             Save and the slider are locked while it writes, and the end says
-            which outcome it was
+            which outcome it was; Close hides the window, Build > Show Run
+            Window brings it back
 CLI         uv run python cli.py {validate|drift|gate|pending|prepare|decide|test|duplicates|index|install-hook} [ROOT]
             uv run python cli.py accept ROOT ID... | --all [--by NAME]
             uv run python cli.py reject ROOT ID... --reason TEXT [--by NAME]
