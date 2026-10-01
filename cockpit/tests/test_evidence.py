@@ -175,3 +175,53 @@ def test_the_exclusion_list_has_exactly_one_definition():
     assert drift._EXCLUDE is evidence.EXCLUDED_DIRS
     source = Path(attribution.__file__).read_text(encoding="utf-8")
     assert "_EXCLUDE = {" not in source, "attribution redefines the exclusion list"
+
+
+# ---- one ownership line: the most specific owner wins ---------------------------
+
+def _line(tmp_path, sub_parent="svc.rules"):
+    """svc.rules owns svc/rules/**; a second node owns one file inside it."""
+    def spec(rel, body):
+        p = tmp_path / rel / "SPEC.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f"---\n{body}---\n", encoding="utf-8")
+    (tmp_path / "ARCHITECTURE.md").write_text("# A\n", encoding="utf-8")
+    spec(".", "id: app\nparent: null\nkind: system\ncontract: {purpose: x}\ncode: []\n")
+    spec("svc", "id: svc\nparent: app\nkind: container\ncontract: {purpose: y}\ncode: []\n")
+    spec("svc/rules", "id: svc.rules\nparent: svc\nkind: component\n"
+                      "contract: {provides: ['step()']}\ncode: ['svc/rules/**/*.py']\n")
+    spec("svc/angle", f"id: svc.angle\nparent: {sub_parent}\nkind: component\n"
+                      "contract: {provides: ['angle()']}\ncode: ['svc/rules/src/angle.py']\n")
+    src = tmp_path / "svc" / "rules" / "src"
+    src.mkdir(parents=True)
+    (src / "angle.py").write_text("def angle():\n    return 45\n", encoding="utf-8")
+    (src / "step.py").write_text("from .angle import angle\n", encoding="utf-8")
+    from engine import parser
+    return parser.load_nodes(tmp_path)
+
+
+def test_a_sub_component_carves_its_file_out_of_its_parent(tmp_path):
+    """core.rules.angle owning one file of core/src/**/rules/** must not need
+    core.rules' glob narrowed by hand: on one ownership line the deeper wins."""
+    from engine import context, drift
+    nodes = _line(tmp_path)
+    owners = evidence.ownership_map(nodes, str(tmp_path))
+    angle = str((tmp_path / "svc/rules/src/angle.py").resolve())
+    step = str((tmp_path / "svc/rules/src/step.py").resolve())
+    assert owners[angle] == {"svc.angle"} and owners[step] == {"svc.rules"}
+    report = drift.run(nodes, str(tmp_path))
+    assert "ownership conflict" not in report and "HARD errors: 0" in report
+    parent = context.assemble(nodes, "", "svc.rules", str(tmp_path))
+    own = parent.split("# Own code", 1)[1].split("# Dependency contracts", 1)[0]
+    assert "step.py" in own and "angle.py" not in own        # the sub-component's now
+    child = context.assemble(nodes, "", "svc.angle", str(tmp_path))
+    assert "def angle()" in child
+
+
+def test_owners_on_different_lines_still_conflict(tmp_path):
+    """Not related -- a sibling claiming the same file -- stays a HARD conflict."""
+    from engine import drift
+    nodes = _line(tmp_path, sub_parent="svc")                # svc.angle: a sibling now
+    report = drift.run(nodes, str(tmp_path))
+    assert "ownership conflict: svc/rules/src/angle.py owned by ['svc.angle', 'svc.rules']" \
+        in report

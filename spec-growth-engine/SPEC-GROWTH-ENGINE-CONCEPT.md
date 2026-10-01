@@ -39,7 +39,8 @@ We keep the C4 levels:
 Context   -> system boundary and external actors
 Container -> deployable/runtime units
 Component -> internal modules/components
-Code      -> implementation files or code units
+Code      -> implementation files -- NOT a node here: what a component's spec
+             generates and is measured against
 ```
 
 But these levels are allowed to grow over time.
@@ -105,7 +106,8 @@ Ownership describes containment/decomposition:
 Context
 +-- Container
     +-- Component
-        +-- Code unit
+        +-- Component (nested, as deep as it needs to)
+            ... owns its code files through its `code` globs
 ```
 
 Each node has exactly one parent, except the root.
@@ -228,7 +230,8 @@ Default:
 
 ```text
 One SPEC.md per node (system, container, component). Not per source file.
-The field `kind` declares the level; code stays inline. See SPEC-TEMPLATE.md.
+The field `kind` declares the level; code is owned by a component's globs and
+is never a node of its own. See SPEC-TEMPLATE.md.
 ```
 
 Files inside the component inherit the component spec.

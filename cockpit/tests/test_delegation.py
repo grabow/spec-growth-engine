@@ -139,7 +139,7 @@ def test_a_breaking_change_to_a_consumed_component_is_in_scope(graph_root):
 @pytest.mark.parametrize("edit,node", [
     (("util", "kind: component", "kind: component\nprotected: true"), "util"),   # 5b zone
     (("api", "http", "grpc"), "api"),                                          # a container
-    (("util", "kind: component", "kind: code"), "util"),                        # structure
+    (("util", "kind: component", "kind: container"), "util"),                   # structure
 ])
 def test_zones_and_structure_stay_hs(graph_root, edit, node):
     accepted.accept_all(_nodes(graph_root), graph_root, by="setup")

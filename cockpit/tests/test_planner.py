@@ -19,7 +19,7 @@ def test_clean_deps_handles_none():
 
 def test_clean_code_only_for_code_owning_kinds():
     assert planner._clean_code(["*.py"], "component") == ["*.py"]
-    assert planner._clean_code(["*.py"], "code") == ["*.py"]
+    assert planner._clean_code(["*.py"], "code") == []      # not a node kind
     assert planner._clean_code(["*.py"], "container") == []
     assert planner._clean_code(["*.py"], "system") == []
 

@@ -157,9 +157,9 @@ _PRESERVED_ON_REVISE = ("waiver", "excluded", "protected")
 
 
 def _clean_code(code, kind: str) -> list[str]:
-    """Only code-owning kinds carry globs; keep non-empty strings, de-duplicated.
+    """Only a component carries globs; keep non-empty strings, de-duplicated.
     `**` is allowed (root-relative package globs are intentionally recursive)."""
-    if kind not in ("component", "code"):
+    if kind != "component":
         return []
     out: list[str] = []
     for c in code or []:

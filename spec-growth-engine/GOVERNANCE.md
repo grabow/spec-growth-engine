@@ -461,7 +461,7 @@ NO FAKE COMPLETION (status lifecycle, cockpit/engine/lifecycle.py):
   A node marked `verified` MUST have a passing test-evidence record, else the gate
   is a HARD BLOCK. Evidence is written by Run Tests into <root>/.sge/evidence.json
   (test command + verdict + timestamp, per node sharing the build root); a FAIL
-  record also blocks `verified`. `implemented`/`verified` component/code nodes that
+  record also blocks `verified`. `implemented`/`verified` component nodes that
   own no existing code raise a warning. Thus `verified` is EARNED, not claimed --
   the second failure mode (§0) is now mechanically prevented, like drift.
   (Test execution stays a separate, deterministic step; the gate only checks that

@@ -22,6 +22,8 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
+from . import graph
+
 # ---------------------------------------------------------------- TS / JS ----
 # import x from '...' / export ... from '...'
 _FROM = re.compile(r"""\bfrom\s*['"]([^'"]+)['"]""")
@@ -144,12 +146,32 @@ def stale_exclusions(nodes: dict[str, dict],
 
 def ownership_map(nodes: dict[str, dict], project_root: str | Path) -> dict[str, set[str]]:
     """Map each owned source file (resolved abs path) -> set of owning node ids.
-    Code globs are resolved relative to the PROJECT ROOT, not the node's folder."""
+    Code globs are resolved relative to the PROJECT ROOT, not the node's folder.
+
+    On ONE ownership line the most specific owner wins: a component whose glob
+    covers a file of its sub-component gives that file up -- the sub-component
+    carves it out, and nobody has to narrow the parent's glob by hand. Owners
+    that are NOT on one line keep the file together: that is the ownership
+    conflict drift reports."""
     owners: dict[str, set[str]] = defaultdict(set)
     for nid, node in nodes.items():
         for f in resolve_node_files(node, project_root):
             owners[f].add(nid)
+    for f, who in owners.items():
+        if len(who) > 1:
+            deepest = most_specific(nodes, who)
+            if deepest:
+                owners[f] = {deepest}
     return owners
+
+
+def most_specific(nodes: dict[str, dict], who: set[str]) -> str | None:
+    """The one of `who` all the others are ancestors of -- None when they do not
+    lie on one ownership line."""
+    for nid in who:
+        if who <= set(graph.spine(nodes, nid)):
+            return nid
+    return None
 
 
 # ----------------------------------------------------------------- TS / JS ---

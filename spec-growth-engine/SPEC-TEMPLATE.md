@@ -6,7 +6,7 @@
 
 ## 0. The rule
 
-Every **node** above the Code level is a **`SPEC.md`** — one file type, one parser.
+Every **node** is a **`SPEC.md`** — one file type, one parser.
 The level is declared by the field **`kind`** and is also visible from the
 **directory depth**. There is no separate `CONTAINER.md` / `COMPONENT.md`.
 
@@ -16,7 +16,8 @@ ARCHITECTURE.md  -> CROSS-CUTTING, NOT a node: invariants, principles, quality
 System     -> root SPEC.md   (kind: system)   structural apex: "consists of containers"
 Container  -> SPEC.md         (kind: container)
 Component  -> SPEC.md         (kind: component)
-Code       -> normally nothing; rare inline front matter (kind: code) in the file
+Code       -> NOT a node: the files a component's `code` globs own -- generated
+              from its spec and measured against it (drift, test evidence)
 ```
 
 `ARCHITECTURE.md` is the one artifact that is **not** a node: no `kind`, no
@@ -29,7 +30,7 @@ constrains all of it. Everything else is a structural node.
 ---
 id:         # dotted path: container.component.subcomponent  (null-segment for root)
 parent:     # the containing node = id minus last segment; null for the root
-kind:       # system | container | component | code
+kind:       # system | container | component
 contract:   # OUTWARD — what the node promises. Meaning varies by kind (see §2).
             #   acceptance_criteria = WHAT must be proven.
 design:     # INWARD  — how it is fulfilled. Meaning varies by kind. Two sub-keys:
@@ -69,9 +70,11 @@ container  external surface: API endpoints / events /  children (= components), 
            store interface (protocol level)            runtime/tech
 component  concrete function/interface signatures,     internal approach,            file glob
            error_behavior, acceptance criteria         optional sub-components
-code       the file/function promise (a few lines),    (none — it IS the impl)       the file
-           invariants                                                                 itself
 ```
+
+Specs end at the component. A single file with a contract of its own (a state
+machine, a parser, a security or idempotency guard) is a SUB-COMPONENT that owns
+that one file (§3.4) -- there is no `code` kind.
 
 Same term, different level → different role. Example: data storage is a
 **global invariant in ARCHITECTURE.md** ("persistence = PostgreSQL products table"),
@@ -176,26 +179,29 @@ status: specd
 # Product store
 ```
 
-### 3.4 code — inline front matter, NOT a separate file
+### 3.4 a sub-component for one file
 
 Only for a single file with a non-obvious contract (state machine, parser,
-security/idempotency guard). The header lives **inside** the code file:
+security/idempotency guard). It is a component like any other, with its own
+`SPEC.md` -- a header inside the code file is NOT read -- and it owns just that
+file. Its parent's broader glob (`src/api/checkout/**`) gives the file up by itself:
+on one ownership line the most specific owner wins.
 
-```ts
-/**
- * ---
- * id: api.checkout.statemachine
- * parent: api.checkout
- * kind: code
- * contract:
- *   role: Enforces legal checkout status transitions.
- *   provides: ["transition(from, event): Status"]
- *   invariants:
- *     - "pending -> confirmed allowed."
- *     - "confirmed -> failed rejected."
- * depends_on: [shared.types]
- * ---
- */
+```yaml
+---
+id: api.checkout.statemachine
+parent: api.checkout
+kind: component
+contract:
+  purpose: Enforces legal checkout status transitions.
+  provides: ["transition(from, event): Status"]
+  invariants:
+    - "pending -> confirmed allowed."
+    - "confirmed -> failed rejected."
+depends_on: [shared.types]
+code: ["src/api/checkout/statemachine.ts"]
+status: specd
+---
 ```
 
 ## 4. Conventions

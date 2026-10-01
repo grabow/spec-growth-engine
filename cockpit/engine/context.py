@@ -16,7 +16,7 @@ from pathlib import Path
 import yaml
 
 from . import graph
-from .evidence import EXCLUDED_DIRS
+from .evidence import EXCLUDED_DIRS, resolve_node_files
 
 _MAX_CODE_FILES = 20
 
@@ -66,7 +66,7 @@ def assemble(nodes: dict[str, dict], arch_md: str, target: str, project_root: st
         out.append(n["_body"].strip())
 
     # 4. Own code
-    files = _own_code(n, project_root)
+    files = _own_code(n, project_root, _carved_out(nodes, target, project_root))
     out.append("\n# Own code")
     if files:
         for f in files[:_MAX_CODE_FILES]:
@@ -96,15 +96,25 @@ def assemble(nodes: dict[str, dict], arch_md: str, target: str, project_root: st
     return "\n".join(out)
 
 
-def _own_code(node: dict, project_root: str) -> list[str]:
+def _carved_out(nodes: dict[str, dict], nid: str, project_root: str) -> set[str]:
+    """The files a descendant of `nid` owns: on one ownership line the most
+    specific owner wins (evidence.ownership_map), so they are not `nid`'s own
+    code, whatever its glob says."""
+    return {f for d in nodes if d != nid and nid in graph.spine(nodes, d)
+            for f in resolve_node_files(nodes[d], project_root)}
+
+
+def _own_code(node: dict, project_root: str, carved: set[str] = frozenset()) -> list[str]:
     """The node's own source files. A recursive glob (`src/svc/textfile/**`)
     also catches what the build leaves behind -- `__pycache__/*.pyc` in run 07 --
     so the build-output directories the evidence scanner skips are skipped here
-    too: a bundle of bytecode teaches C nothing and costs it its context."""
+    too: a bundle of bytecode teaches C nothing and costs it its context. Files
+    a descendant carved out (`carved`, resolved paths) are the descendant's."""
     base = Path(project_root)  # code globs are project-root-relative
     found: list[str] = []
     for pattern in node.get("code") or []:
         if isinstance(pattern, str):
             found += glob.glob(str(base / pattern), recursive=True)
     return sorted(f for f in found if Path(f).is_file()
-                  and not EXCLUDED_DIRS & set(Path(f).relative_to(base).parts))
+                  and not EXCLUDED_DIRS & set(Path(f).relative_to(base).parts)
+                  and str(Path(f).resolve()) not in carved)

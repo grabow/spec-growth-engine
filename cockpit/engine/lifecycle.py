@@ -5,7 +5,7 @@ by drift.py) and **fake completion** -- a node marked done while real gaps hide.
 This module closes the second: a node's `status` must be backed by evidence.
 
   - `verified` REQUIRES a passing test-evidence record for that node.
-  - `implemented`/`verified` component/code nodes SHOULD own existing code.
+  - `implemented`/`verified` components SHOULD own existing code.
 
 Test evidence is recorded by the Run Tests action (or any caller) into a small
 persistent store `<root>/.sge/evidence.json`, keyed by node id. It is a local
@@ -110,7 +110,7 @@ def status_issues(nodes: dict[str, dict], project_root: str | Path) -> list[tupl
             elif rec.get("status") != "pass":
                 out.append(("HARD", f"status 'verified' but last test evidence is "
                                     f"'{rec.get('status')}': {nid}"))
-        if st in ("implemented", "verified") and kind in ("component", "code"):
+        if st in ("implemented", "verified") and kind == "component":
             if not code_evidence.resolve_node_files(n, project_root):
                 out.append(("WARN", f"status '{st}' but node owns no existing code: {nid}"))
 

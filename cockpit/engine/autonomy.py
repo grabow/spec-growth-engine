@@ -174,7 +174,7 @@ def delegable_scope(change: dict) -> tuple[bool, str]:
         return False, "a new container or root is H's"
     if change.get("deleted"):
         return False, "a deletion is H's"
-    if change.get("kind") not in ("component", "code"):
+    if change.get("kind") != "component":
         return False, f"a {change.get('kind') or 'node of unknown kind'} is H's"
     other = [why for gate, why in change["reasons"]
              if gate == "HARD" and not why.startswith(changeset.BREAKING)]

@@ -737,7 +737,7 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("root")
     sp.add_argument("id")
     sp.add_argument("--parent", required=True)
-    sp.add_argument("--kind", default="component", choices=("component", "code", "container"))
+    sp.add_argument("--kind", default="component", choices=("component", "container"))
     sp.add_argument("--intent", required=True, help="what the node is for, with examples")
     sp = sub.add_parser("revise")
     sp.add_argument("root")

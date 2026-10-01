@@ -630,7 +630,10 @@ deleted from the cockpit:
   them belongs in the template. Headless: `cli.py manuals ROOT`.
 - **New node** - opens a dialog: pick the **parent** (any existing node), a
   **segment** (the last id part), and a **kind** (`component` / `container` /
-  `system` / `code`). The engine creates `<parent_dir>/<segment>/SPEC.md` as an
+  `system`). There is no `code` kind: specs end at the component, which nests as
+  deep as it needs to -- a file with a contract of its own is a sub-component
+  owning that file, and its parent's glob gives the file up by itself (on one
+  ownership line the most specific owner wins). The engine creates `<parent_dir>/<segment>/SPEC.md` as an
   empty skeleton and adds it to the parent's `design.children`. The id is
   `<segment>` under the system root, otherwise `<parent_id>.<segment>`.
   For a **container** you also pick a **Code layout** convention (`layouts.py`:

@@ -51,3 +51,19 @@ def test_bootstrap_repairs_broken_root(tmp_path):
     nodes.bootstrap_root(str(tmp_path), "app", "x")  # should repair, not raise
     n = parser.load_nodes(tmp_path)
     assert "app" in n
+
+
+def test_the_whole_id_typed_as_the_segment_is_read_as_its_last_part(graph_root):
+    """`api.report` typed under api made `api.api.report`, in a folder named
+    `api.report` -- the id is meant, so its last part is taken."""
+    n = parser.load_nodes(graph_root)
+    nid, path = nodes.new_node("api", "api.report", "component", n)
+    assert nid == "api.report"
+    assert path.endswith("/api/report/SPEC.md")
+
+
+def test_a_segment_of_more_than_one_id_part_is_refused(graph_root):
+    n = parser.load_nodes(graph_root)
+    with pytest.raises(ValueError, match="more than one id part"):
+        nodes.new_node("api", "deep.report", "component", n)
+    assert not (graph_root / "api" / "deep.report").exists()

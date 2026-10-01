@@ -32,7 +32,7 @@ def _classify(root, nid, **changes):
 
 @pytest.mark.parametrize("kind,parent,gate", [
     ("component", "api", "SOFT"),
-    ("code", "api.hello", "SOFT"),
+    ("code", "api.hello", "HARD"),      # no node kind any more: unknown -> fail safe
     ("container", "app", "HARD"),
     ("system", None, "HARD"),
     ("banana", "api", "HARD"),   # kind is unenforced: unknown -> fail safe

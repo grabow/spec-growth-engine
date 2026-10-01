@@ -97,11 +97,20 @@ def new_node(
     The engine stays language-agnostic: it writes bytes it was handed.
     """
     segment = segment.strip().strip("/").replace(" ", "-")
-    if not segment:
-        raise ValueError("segment name is empty")
     if parent_id not in nodes:
         raise ValueError(f"unknown parent: {parent_id}")
     parent = nodes[parent_id]
+    # the whole id typed where only its last part belongs -- `core.sound.player`
+    # under core.sound -- made `core.sound.core.sound.player`, in a folder of that
+    # name. The id is meant: take its last part.
+    if parent.get("kind") != "system" and segment.startswith(f"{parent_id}."):
+        segment = segment[len(parent_id) + 1:]
+    if not segment:
+        raise ValueError("segment name is empty")
+    if "." in segment:
+        raise ValueError(f"'{segment}' is more than one id part: a segment is the LAST "
+                         "part of the id. For a node further down, pick the node above "
+                         "it as the parent.")
     nid = compute_id(parent, segment)
     if nid in nodes:
         raise ValueError(f"node already exists: {nid}")

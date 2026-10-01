@@ -234,7 +234,7 @@ def classify(nodes: dict[str, dict], node_id: str, new: dict | None) -> dict:
             reasons.append(("HARD", "new system root (sets root invariants)"))
         elif kind == "container":
             reasons.append(("HARD", "new container"))
-        elif kind in ("component", "code"):
+        elif kind == "component":
             reasons.append(("SOFT", f"new {kind} boundary under {new.get('parent')}"))
         else:
             reasons.append(("HARD", f"new node of unknown kind {kind!r} (cannot classify, "

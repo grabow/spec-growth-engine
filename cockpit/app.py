@@ -65,7 +65,9 @@ from engine import (
     parser, validate,
 )
 
-KINDS = ["component", "container", "system", "code"]
+# Specs end at the component: a component nests as deep as it needs to, and the
+# code is what is generated from a spec and measured against it -- not a node.
+KINDS = ["component", "container", "system"]
 
 def _looks_like_spec(text: str) -> bool:
     """True if the text is a SPEC.md: YAML frontmatter containing an `id:` line."""

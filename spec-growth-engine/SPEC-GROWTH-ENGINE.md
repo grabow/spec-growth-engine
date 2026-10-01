@@ -79,15 +79,24 @@ Each model-backed role (I, P, H', C) has its own model setting (GOVERNANCE §1).
 
 ### 3.2 Node kinds — CANONICAL  *(templates in SPEC-TEMPLATE.md)*
 ```text
-system | container | component | code
+system | container | component
    C4 calls the top level "System Context"; the node kind is `system`.
-   Every node above `code` is one SPEC.md; `kind` declares the level.
+   Every node is one SPEC.md; `kind` declares the level.
+   Specs end at the COMPONENT, and a component nests as deep as it needs to
+   (core.rules.angle under core.rules). C4's fourth level, Code, is not a
+   node: it is what is generated from a spec and measured against it -- drift,
+   test evidence. Code without a spec is an orphan; a file with a contract of
+   its own is a component that owns that one file.
+   On one ownership line the most specific owner wins: a sub-component carves
+   its files out of its parent's glob, which needs no narrowing by hand
+   (engine/evidence.ownership_map). Owners NOT on one line conflict -- HARD.
 ```
 
 ```text
-NOT ENFORCED. Nothing validates that `kind` holds one of these four values:
-`kind: banana` parses and passes the gate. The four-value list in app.py
-(KINDS) is a GUI combobox, not a rule. Contrast `status`, which HAS an
+NOT ENFORCED. Nothing validates that `kind` holds one of these three values:
+`kind: banana` parses and passes the gate. The three-value list in app.py
+(KINDS) is a GUI combobox, not a rule. The change set reads an unknown kind --
+`banana`, or the former `code` -- as HARD, fail safe. Contrast `status`, which HAS an
 enforced enum (lifecycle.VALID_STATUS -> WARN on an unknown value).
 So this line is a CONVENTION that the tooling relies on but does not check.
 ```
@@ -118,10 +127,13 @@ derived number is wrong on average rather than occasionally -- this one said
 
 ```text
 BUILT
-  owned    the file matches exactly one node's `code` globs
+  owned    the file matches one node's `code` globs -- or several on one
+           ownership line, and the most specific of them owns it
            -> engine/evidence.ownership_map
   orphan   an in-scope file no node owns          -> HARD  (drift.run)
-  conflict the same file owned by >1 node         -> HARD  (drift.run)
+  conflict the same file owned by >1 node NOT on  -> HARD  (drift.run)
+           one ownership line -- on one line the most
+           specific owner takes it (evidence.ownership_map)
 
   A `code` glob names the files that REALIZE a node, never the graph itself:
   claiming a SPEC.md or ARCHITECTURE.md is HARD. That is also what makes
