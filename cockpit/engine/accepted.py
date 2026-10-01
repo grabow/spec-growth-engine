@@ -120,8 +120,9 @@ def changes(nodes: dict[str, dict], root: str | Path) -> list[dict]:
     old = {nid: rec["spec"] for nid, rec in state["nodes"].items()}
     rejected = state.get("rejected") or {}
     out = []
+    users = changeset.ancestor_users(nodes, root)    # a parent using its sub-component
     for nid in sorted(set(nodes) | set(old)):
-        change = changeset.classify(old, nid, nodes.get(nid))
+        change = changeset.classify(old, nid, nodes.get(nid), users=users)
         if change["reasons"]:
             change["fingerprint"] = _fingerprint(old.get(nid), nodes.get(nid))
             out.append(change)

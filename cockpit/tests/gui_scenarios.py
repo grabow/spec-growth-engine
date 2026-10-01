@@ -694,6 +694,67 @@ def check_goal_says_the_verdict():
     c._run = None
 
 
+def rename_node_shows_the_plan_first():
+    """Node > Rename Node: the plan is shown before anything moves; a no leaves
+    everything as it was, a yes renames, and the cockpit follows the node."""
+    import app
+    c = _cockpit(replies=["window", "screen"])          # the new last id part, twice
+    asked = []
+    app.messagebox.askyesno = lambda title, msg, **k: asked.append(msg) or False
+    c.target.set("svc.tkwin")
+    c.rename_node()
+    _check(asked and "svc.tkwin  ->  svc.window" in asked[0], f"no plan shown: {asked}")
+    _check((c.proj / "tkwin" / "SPEC.md").exists(), "a no still renamed it")
+
+    app.messagebox.askyesno = lambda *a, **k: True
+    c.rename_node()
+    _check("svc.screen" in c.nodes and "svc.tkwin" not in c.nodes, sorted(c.nodes))
+    _check(c.target.get() == "svc.screen", f"the target is {c.target.get()}")
+    _check("id: svc.screen" in c.view.get("1.0", "end"), "the renamed spec is not loaded")
+    said = c.guidance.get("1.0", "end")
+    _check("renamed   svc.tkwin -> svc.screen" in said and "code      untouched" in said,
+           said)
+
+
+def code_affected_codes_in_order_and_locks():
+    """Build > Codex Affected: the list in order is shown first; it runs
+    `cli.py code ROOT ID --affected` as a process of its own, shown like a run --
+    the writers locked while C writes -- and says how it ended."""
+    import types
+    import app
+    c = _cockpit()
+    app.threading = types.SimpleNamespace(Thread=_InlineThread)
+    app.llm.missing = lambda role: []
+    asked, started = [], []
+    app.messagebox.askyesno = lambda title, msg, **k: asked.append(msg) or True
+    lines = ["affected, in order: svc.gui", "", "===== 1/1  C implements svc.gui =====",
+             "C writes ...", "AFFECTED DONE: 1 node(s) coded; tests pass, gate pass"]
+
+    def popen(argv, **kw):
+        started.append(argv)
+        return _FakeRun(lines)
+    app.subprocess.Popen = popen
+    c.target.set("svc.gui")
+    c.code_affected()
+    _check(asked and "1. svc.gui" in asked[0], f"no list shown first: {asked}")
+    _check(started and started[0][-4:] == ["code", c.root_dir, "svc.gui", "--affected"],
+           f"argv {started}")
+    for _ in range(400):
+        if c._chain is None:
+            break
+        _settle(c)
+    _check(c._chain is None, "Codex Affected never ended")
+    shown = "\n".join(w.get("1.0", "end") for w in _walk(c._run_win) if isinstance(w, tk.Text))
+    _check("C implements svc.gui" in shown and "AFFECTED DONE" in shown, shown)
+    _check("AFFECTED DONE" in c.guidance.get("1.0", "end"), c.guidance.get("1.0", "end"))
+    _check(str(c.draft_button.cget("state")) == "normal", "Draft stayed locked")
+
+    asked.clear()
+    app.messagebox.askyesno = lambda title, msg, **k: asked.append(msg) or False
+    c.code_affected()
+    _check(len(started) == 1, "a no still started it")
+
+
 def edit_goal_with_p():
     """For a project that exists: TASK.md in an editor, P's proposal in its place,
     written only by Save."""
@@ -737,7 +798,9 @@ SCENARIOS = {f.__name__: f for f in (badge, validate, grant, invalid_grant, stal
                                      open_target_prepares_the_revise,
                                      picking_a_target_loads_its_spec,
                                      codex_builds_its_context,
-                                     check_goal_says_the_verdict)}
+                                     check_goal_says_the_verdict,
+                                     rename_node_shows_the_plan_first,
+                                     code_affected_codes_in_order_and_locks)}
 
 if __name__ == "__main__":
     SCENARIOS[sys.argv[1]]()

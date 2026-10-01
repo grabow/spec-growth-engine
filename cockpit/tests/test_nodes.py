@@ -67,3 +67,83 @@ def test_a_segment_of_more_than_one_id_part_is_refused(graph_root):
     with pytest.raises(ValueError, match="more than one id part"):
         nodes.new_node("api", "deep.report", "component", n)
     assert not (graph_root / "api" / "deep.report").exists()
+
+
+# ---- rename -------------------------------------------------------------------
+
+def test_rename_a_consumed_leaf_rewrites_its_edges_and_leaves_its_code(graph_root):
+    """util -> tools: its consumer's depends_on and its parent's children follow;
+    the SPEC.md moves, the code beside it stays, and the glob still owns it."""
+    from engine import drift, validate
+    n = parser.load_nodes(graph_root)
+    result = nodes.rename_node(graph_root, "util", "tools", n)
+    assert result["ids"] == {"util": "tools"}
+    assert result["moves"] == [("util/SPEC.md", "tools/SPEC.md")]
+    n = parser.load_nodes(graph_root)
+    assert "util" not in n and n["tools"]["code"] == ["util/*.py"]
+    assert n["api.hello"]["depends_on"] == ["tools"]
+    assert n["app"]["design"]["children"] == ["api", "tools"]
+    assert (graph_root / "util" / "log.py").exists()          # the code did not move
+    for report in (validate.run(n, str(graph_root)), drift.run(n, str(graph_root))):
+        assert "HARD errors: 0" in report, report
+
+
+def test_rename_carries_the_subtree(graph_root):
+    n = parser.load_nodes(graph_root)
+    result = nodes.rename_node(graph_root, "api", "service", n)
+    assert result["ids"] == {"api": "service", "api.hello": "service.hello"}
+    n = parser.load_nodes(graph_root)
+    assert n["service.hello"]["parent"] == "service"
+    assert n["service"]["design"]["children"] == ["service.hello"]
+    assert n["service.hello"]["_path"].endswith("service/hello/SPEC.md")
+    assert (graph_root / "api" / "hello" / "greet.py").exists()   # the code stays
+
+
+def test_rename_keeps_the_order_of_the_fields(graph_root):
+    nodes.rename_node(graph_root, "util", "tools", parser.load_nodes(graph_root))
+    head = (graph_root / "api" / "hello" / "SPEC.md").read_text(encoding="utf-8")
+    assert head.index("id:") < head.index("parent:") < head.index("kind:")
+
+
+def test_rename_reports_prose_that_still_names_the_old_id(graph_root):
+    spec = graph_root / "api" / "hello" / "SPEC.md"
+    spec.write_text(spec.read_text(encoding="utf-8") + "\nLogs through util.\n",
+                    encoding="utf-8")
+    result = nodes.rename_node(graph_root, "util", "tools", parser.load_nodes(graph_root))
+    assert result["mentions"] == ["api/hello/SPEC.md"]
+
+
+@pytest.mark.parametrize("segment,message", [
+    ("deep.tools", "more than one id part"),
+    ("api", "already exists"),
+    ("util", "already called that"),
+])
+def test_rename_refuses_what_cannot_be(graph_root, segment, message):
+    n = parser.load_nodes(graph_root)
+    with pytest.raises(ValueError, match=message):
+        nodes.rename_plan(graph_root, "util", segment, n)
+    assert (graph_root / "util" / "SPEC.md").exists()
+
+
+def test_rename_plan_changes_nothing(graph_root):
+    before = {p: p.read_text(encoding="utf-8") for p in graph_root.rglob("SPEC.md")}
+    plan = nodes.rename_plan(graph_root, "util", "tools", parser.load_nodes(graph_root))
+    assert plan["rewritten"] == ["SPEC.md", "api/hello/SPEC.md", "util/SPEC.md"]
+    assert {p: p.read_text(encoding="utf-8") for p in graph_root.rglob("SPEC.md")} == before
+
+
+def test_a_renamed_node_keeps_its_history(graph_root):
+    """intents.jsonl is kept by id: without a `renamed` entry the growth record of
+    the node would simply end at the old name."""
+    from engine import intents
+    nodes.rename_node(graph_root, "util", "tools", parser.load_nodes(graph_root), by="me")
+    [entry] = intents.history(graph_root, "tools")
+    assert entry["action"] == "renamed" and entry["intent"] == "renamed from util"
+
+
+def test_cli_rename(graph_root, capsys):
+    import cli
+    assert cli.main(["rename", str(graph_root), "util", "tools", "--by", "me"]) == 0
+    out = capsys.readouterr().out
+    assert "renamed   util -> tools" in out and "moved     util/SPEC.md -> tools/SPEC.md" in out
+    assert cli.main(["rename", str(graph_root), "tools", "a.b"]) == 2

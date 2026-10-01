@@ -12,9 +12,15 @@ Layout rule (matches the examples):
 """
 from __future__ import annotations
 
+import re
+import shutil
 from pathlib import Path
 
 import frontmatter
+
+from . import graph
+
+SPEC = "SPEC.md"
 
 
 def bootstrap_root(root_dir: str, system_id: str = "app", purpose: str = "", force: bool = False) -> str:
@@ -96,21 +102,12 @@ def new_node(
     it as its own `code` -- a file no node owns is an orphan and blocks the gate.
     The engine stays language-agnostic: it writes bytes it was handed.
     """
-    segment = segment.strip().strip("/").replace(" ", "-")
     if parent_id not in nodes:
         raise ValueError(f"unknown parent: {parent_id}")
     parent = nodes[parent_id]
     # the whole id typed where only its last part belongs -- `core.sound.player`
-    # under core.sound -- made `core.sound.core.sound.player`, in a folder of that
-    # name. The id is meant: take its last part.
-    if parent.get("kind") != "system" and segment.startswith(f"{parent_id}."):
-        segment = segment[len(parent_id) + 1:]
-    if not segment:
-        raise ValueError("segment name is empty")
-    if "." in segment:
-        raise ValueError(f"'{segment}' is more than one id part: a segment is the LAST "
-                         "part of the id. For a node further down, pick the node above "
-                         "it as the parent.")
+    # under core.sound -- made `core.sound.core.sound.player`; _segment reads it
+    segment = _segment(nodes, parent_id, segment)
     nid = compute_id(parent, segment)
     if nid in nodes:
         raise ValueError(f"node already exists: {nid}")
@@ -149,6 +146,172 @@ def new_node(
     spec.write_text(frontmatter.dumps(post) + "\n", encoding="utf-8")
     _rewrite_children(parent, add=nid)
     return nid, str(spec)
+
+
+def _segment(nodes: dict[str, dict], parent_id: str | None, segment: str) -> str:
+    """The last id part, as typed: spaces become dashes; the whole id typed instead
+    (`core.sound.player` under core.sound) is read as its last part; anything still
+    holding a dot is refused -- a segment is ONE id part."""
+    segment = segment.strip().strip("/").replace(" ", "-")
+    parent = nodes.get(parent_id) if parent_id else None
+    if parent and parent.get("kind") != "system" and segment.startswith(f"{parent_id}."):
+        segment = segment[len(parent_id) + 1:]
+    if not segment:
+        raise ValueError("segment name is empty")
+    if "." in segment:
+        raise ValueError(f"'{segment}' is more than one id part: a segment is the LAST "
+                         "part of the id. For a node further down, pick the node above "
+                         "it as the parent.")
+    return segment
+
+
+def rename_plan(root: str | Path, node_id: str, segment: str,
+                nodes: dict[str, dict]) -> dict:
+    """What renaming `node_id` to the new last id part `segment` would do -- and
+    nothing done yet. Raises ValueError for a rename that cannot be.
+
+    {"ids": {old: new} (the node and every descendant whose id carries it),
+     "moves": [(old SPEC.md, new SPEC.md)] (project-root-relative),
+     "rewritten": [SPEC.md files whose fields name a renamed id]}
+
+    Only the SPEC.md files move. A file beside one -- code kept in the spec
+    tree, notes -- stays where it is, and the `code` globs, project-root-relative,
+    keep naming the same files: renaming a node never re-points ownership
+    (SPEC-GROWTH-ENGINE.md 3.2a). The code is renamed, if at all, as a change of
+    its own (Revise the globs, let Codex move it)."""
+    if node_id not in nodes:
+        raise ValueError(f"unknown node: {node_id}")
+    node = nodes[node_id]
+    parent_id = node.get("parent")
+    segment = _segment(nodes, parent_id, segment)
+    parent = nodes.get(parent_id) if parent_id else None
+    new_id = compute_id(parent, segment) if parent else segment
+    if new_id == node_id:
+        raise ValueError(f"{node_id} is already called that")
+    below = [d for d in nodes if d != node_id and node_id in graph.spine(nodes, d)]
+    ids = {node_id: new_id}
+    for d in below:
+        if d.startswith(f"{node_id}."):
+            ids[d] = new_id + d[len(node_id):]
+    taken = [new for old, new in ids.items() if new in nodes and new not in ids]
+    if taken:
+        raise ValueError(f"node already exists: {', '.join(taken)}")
+
+    root = Path(root).resolve()
+    moves: list[tuple[str, str]] = []
+    if parent is not None:                     # the root's SPEC.md stays at the root
+        old_dir = Path(node["_dir"]).resolve()
+        new_dir = old_dir.parent / segment
+        if (new_dir / SPEC).exists():
+            raise ValueError(f"{(new_dir / SPEC).relative_to(root)} already exists")
+        for nid in [node_id, *below]:
+            path = Path(nodes[nid]["_path"]).resolve()
+            if path.is_relative_to(old_dir):
+                moves.append((str(path.relative_to(root)),
+                              str((new_dir / path.relative_to(old_dir)).relative_to(root))))
+    rewritten = sorted(str(Path(m["_path"]).resolve().relative_to(root))
+                       for m in nodes.values() if _renamed(m, ids))
+    return {"ids": ids, "moves": moves, "rewritten": rewritten}
+
+
+def rename_node(root: str | Path, node_id: str, segment: str,
+                nodes: dict[str, dict], *, by: str = "") -> dict:
+    """Rename `node_id` -- and its subtree -- to the new last id part `segment`:
+    every field that names a renamed id is rewritten (`id`, `parent`,
+    `depends_on`, `design.children`, a decision request's `target`), the SPEC.md
+    files move (rename_plan), and the folders they leave empty go. The plan, plus
+    "mentions": files whose PROSE still names an old id -- not rewritten, for
+    the human to read: a sentence is not a reference the engine can be sure of.
+
+    What follows is the gate's, as for any change: the old ids leave the graph
+    and the new ones arrive, SOFT -- HARD where another node depended on one.
+    The growth record (intents.jsonl) is kept by id, so each renamed node gets
+    a `renamed` entry naming its old id: its history does not end at the rename."""
+    from . import intents, lifecycle
+    plan = rename_plan(root, node_id, segment, nodes)
+    root = Path(root).resolve()
+    ids = plan["ids"]
+    for meta in nodes.values():
+        if _renamed(meta, ids):
+            path = Path(meta["_path"])
+            post = frontmatter.load(path)
+            post.metadata.update(_renamed(post.metadata, ids))
+            _write(path, post)
+    left: set[Path] = set()
+    for old, new in plan["moves"]:
+        src, dst = root / old, root / new
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        left.add(src.parent)
+    for directory in sorted(left, key=lambda d: len(d.parts), reverse=True):
+        while directory != root and directory.is_relative_to(root):
+            _rmdir_if_empty(directory)
+            if directory.exists():
+                break
+            directory = directory.parent
+    for old, new in ids.items():
+        intents.record(root, new, "renamed", f"renamed from {old}", by=by, gate=None)
+        lifecycle.log_autonomy(root, {"actor": intents.author(), "by": by,
+                                      "action": "renamed", "node": new, "from": old})
+    return {**plan, "mentions": _mentions(root, ids)}
+
+
+def rename_text(result: dict) -> str:
+    """What a rename did, for the CLI and the cockpit."""
+    lines = [f"renamed   {old} -> {new}" for old, new in result["ids"].items()]
+    lines += [f"moved     {old} -> {new}" for old, new in result["moves"]]
+    lines += [f"rewrote   {path}" for path in result["rewritten"]]
+    lines += [f"mentions  {path}  (prose still names an old id -- read it)"
+              for path in result.get("mentions") or []]
+    lines += ["code      untouched: the globs still name the same files. To rename the "
+              "code too, Revise the globs and let Codex move it.",
+              "next      run the tests (evidence is kept per id), then the gate -- a "
+              "renamed node others depended on is a HARD change for H to accept"]
+    return "\n".join(lines)
+
+
+def _renamed(meta: dict, ids: dict[str, str]) -> dict:
+    """The fields of `meta` that name a renamed id, with the new ids -- {} when
+    none does. Those fields: `id`, `parent`, `depends_on`, `design.children`, a
+    decision request's `target`."""
+    def one(value):
+        return ids.get(value, value) if isinstance(value, str) else value
+
+    def many(value):
+        return [one(v) for v in value] if isinstance(value, list) else one(value)
+
+    out: dict = {}
+    for key in ("id", "parent"):
+        if one(meta.get(key)) != meta.get(key):
+            out[key] = one(meta[key])
+    if many(meta.get("depends_on")) != meta.get("depends_on"):
+        out["depends_on"] = many(meta["depends_on"])
+    design = meta.get("design")
+    if isinstance(design, dict) and many(design.get("children")) != design.get("children"):
+        out["design"] = {**design, "children": many(design["children"])}
+    requests = meta.get("decision_requests")
+    if isinstance(requests, list):
+        moved = [{**r, "target": one(r.get("target"))} if isinstance(r, dict) else r
+                 for r in requests]
+        if moved != requests:
+            out["decision_requests"] = moved
+    return out
+
+
+def _mentions(root: Path, ids: dict[str, str]) -> list[str]:
+    """Files whose text still names an old id: SPEC.md prose, ARCHITECTURE.md,
+    TASK.md. A path segment of the same name (`util/*.py` for the id `util`) is
+    a path, not the id."""
+    pattern = re.compile("|".join(rf"(?<![\w./]){re.escape(old)}(?![\w/-])"
+                                  for old in sorted(ids, key=len, reverse=True)))
+    hits = []
+    for path in sorted([*root.rglob(SPEC), root / "ARCHITECTURE.md", root / "TASK.md"]):
+        try:
+            if pattern.search(path.read_text(encoding="utf-8")):
+                hits.append(str(path.relative_to(root)))
+        except OSError:
+            continue
+    return hits
 
 
 def delete_node(
@@ -201,7 +364,13 @@ def _rewrite_children(parent: dict, *, add: str | None = None, remove: str | Non
         children.remove(remove)
     design["children"] = children
     post.metadata["design"] = design
-    path.write_text(frontmatter.dumps(post) + "\n", encoding="utf-8")
+    _write(path, post)
+
+
+def _write(path: Path, post) -> None:
+    """A SPEC.md back to disk, its keys in the order they were (id, parent, kind,
+    ... -- yaml.dump would sort them, and every touched file would look rewritten)."""
+    path.write_text(frontmatter.dumps(post, sort_keys=False) + "\n", encoding="utf-8")
 
 
 def _rmdir_if_empty(directory: Path) -> None:

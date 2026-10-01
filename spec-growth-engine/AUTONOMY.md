@@ -506,15 +506,24 @@ Built     classify: the gate a proposed SPEC.md falls under, with every reason.
             new container / root, id / kind / parent, root contract,
             waiver grant                                           -> HARD
             breaking contract change (provides removed or reworded,
-            any other promise changed)   -> HARD if a node depends on it or the
-                                            node is a container/system; else
-                                            SOFT (nobody can break yet)
+            any other promise changed)   -> HARD if a node uses it -- by
+                                            depends_on, or an ancestor whose
+                                            code imports it -- or the node is a
+                                            container/system; else SOFT (nobody
+                                            can break yet)
             provides only added, criteria, code globs, new component -> SOFT
             depends_on, status                                     -> AUTO
             design, prose, a waiver request                        -> NONE
-          impact: the declared consumers, which of them MENTION a removed
+          impact: the consumers -- the nodes that depend_on it, and the
+            ancestors whose code imports its code (changeset.ancestor_users:
+            a parent uses its sub-component along the ownership line, where no
+            depends_on may name it) -- which of them MENTION a removed
             operation (spec + owned code), and which evidence was recorded
             against the old contract.
+          next: what to re-code, in order -- the node, then whoever uses it,
+            what a node uses first (changeset.affected) -- then the whole
+            build. Build > Codex Affected, `cli.py code ROOT ID --affected`,
+            does exactly that; the same as Codex on each and Run Tests after.
           diff: what changed, entry by entry (- before, + after), for every
             contract key and the SOFT and AUTO fields, each part under its
             own gate, HARD first -- the change takes the highest. Design and

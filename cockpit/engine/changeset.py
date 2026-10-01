@@ -64,9 +64,10 @@ import textwrap
 from pathlib import Path
 
 import frontmatter
+import networkx as nx
 
 from . import evidence as code_evidence
-from . import lifecycle
+from . import graph, lifecycle
 from . import nodes as nodeops
 
 GATES = ("NONE", "AUTO", "SOFT", "HARD")
@@ -186,10 +187,13 @@ def _protected_above(nodes: dict[str, dict], start) -> bool:
 
 
 # ---- classify --------------------------------------------------------------
-def classify(nodes: dict[str, dict], node_id: str, new: dict | None) -> dict:
+def classify(nodes: dict[str, dict], node_id: str, new: dict | None, *,
+             users: dict[str, list[str]] | None = None) -> dict:
     """Which gate saving `new` as `node_id`'s SPEC.md falls under; `new=None` is
     the node's deletion. `nodes` is the graph BEFORE the change: the node's old
-    spec, and who depends on it, are read from there.
+    spec, and who depends on it, are read from there. `users` (ancestor_users)
+    adds the ancestors whose code imports the node's code to its consumers --
+    without it only `depends_on` counts.
 
     Returns {node, kind, new_node, deleted, gate, breaking, protected, consumers,
              reasons: [(gate, why)], provides: {added, removed},
@@ -205,7 +209,9 @@ def classify(nodes: dict[str, dict], node_id: str, new: dict | None) -> dict:
         "node": node_id, "kind": (raw or new or {}).get("kind"),
         "new_node": raw is None, "deleted": new is None,
         "breaking": False, "reasons": reasons, "protected": is_protected,
-        "consumers": nodeops.dependents_of(nodes, node_id) if raw is not None else [],
+        "consumers": (sorted({*nodeops.dependents_of(nodes, node_id),
+                              *(users or {}).get(node_id, [])})
+                      if raw is not None else []),
         "provides": {"added": [], "removed": []},
         "criteria": {"added": [], "removed": []},
         "diff": {},
@@ -420,6 +426,56 @@ def provided_names(meta: dict | None) -> set[str]:
     return {h for h in (handle(e) for e in _entries(_contract(meta).get(_PROVIDES))) if h}
 
 
+def ancestor_users(nodes: dict[str, dict], project_root: str | Path) -> dict[str, list[str]]:
+    """{node: [its ancestors whose code imports its code]}. A parent component
+    uses its sub-component along the ownership line, never through `depends_on`
+    -- declaring that would be an error -- so dependents_of cannot name it; the
+    import edges can. A change to the sub-component's contract reaches it all
+    the same, so it is a consumer."""
+    ev = code_evidence.build_evidence(nodes, project_root)
+    owners, out = ev["owners"], {}
+    for importer, imported in ev["edges"]:
+        for user in owners.get(importer, ()):
+            for used in owners.get(imported, ()):
+                if user != used and user in graph.spine(nodes, used):
+                    out.setdefault(used, set()).add(user)
+    return {nid: sorted(who) for nid, who in out.items()}
+
+
+def affected(nodes: dict[str, dict], project_root: str | Path, node_id: str,
+             users: dict[str, list[str]] | None = None) -> list[str]:
+    """The node and whoever uses it -- its `depends_on` consumers and the
+    ancestors whose code imports it -- in the order to re-code them: what a node
+    uses comes before the node. One hop: a consumer whose code changes keeps its
+    own contract, so its consumers are not reached."""
+    users = ancestor_users(nodes, project_root) if users is None else users
+    group = [node_id, *sorted({*nodeops.dependents_of(nodes, node_id),
+                               *users.get(node_id, [])} - {node_id})]
+    order = nx.DiGraph()
+    order.add_nodes_from(group)
+    for n in group:
+        for used in [*(nodes.get(n, {}).get("depends_on") or []),
+                     *(u for u, who in users.items() if n in who)]:
+            if used in order and used != n:
+                order.add_edge(used, n)
+    try:
+        return list(nx.lexicographical_topological_sort(order,
+                                                        key=lambda n: group.index(n)))
+    except nx.NetworkXUnfeasible:          # a cycle: drift reports it; keep the group
+        return group
+
+
+def _needs_code(change: dict) -> bool:
+    """Does the code have to follow? For a new node, and for any change to what
+    it promises, owns or uses -- not for a status, prose or a request alone."""
+    if change.get("deleted"):
+        return False
+    if change["new_node"]:
+        return True
+    return bool(set(change.get("diff") or {}) - {"status"}) or any(
+        why.startswith("design changed") for _, why in change["reasons"])
+
+
 def impact(nodes: dict[str, dict], project_root: str | Path, change: dict) -> dict:
     """Who a change reaches, looked up in the CURRENT graph `nodes`. The
     consumers are the ones `classify` counted (its before-graph). Returns
@@ -430,7 +486,10 @@ def impact(nodes: dict[str, dict], project_root: str | Path, change: dict) -> di
     removed = change["provides"]["removed"]
     handles = {e: handle(e) for e in removed}
     out: dict = {"consumers": [], "unchecked": [e for e, h in handles.items() if not h],
-                 "stale": []}
+                 "stale": [], "next": []}
+    if _needs_code(change):
+        out["next"] = ([nid] if change["new_node"]
+                       else affected(nodes, project_root, nid))
     if change["new_node"]:
         return out
 
@@ -549,6 +608,10 @@ def report(change: dict, reach: dict | None = None) -> str:
     if reach["stale"]:
         lines.append("evidence recorded against the old contract:")
         lines += [f"  {s}" for s in reach["stale"]]
+    if reach.get("next"):
+        lines.append("next: Codex " + ", then ".join(reach["next"]) + " -- then Run Tests, "
+                     "the whole build" + (" (Build > Codex Affected does it in this order)"
+                                          if len(reach["next"]) > 1 else ""))
     return "\n".join(lines)
 
 
@@ -560,5 +623,6 @@ def assess(nodes: dict[str, dict], project_root: str | Path, node_id: str,
     new = parse(text)
     if new is None:
         return None
-    change = classify(nodes if before is None else before, node_id, new)
+    users = ancestor_users(nodes, project_root)
+    change = classify(nodes if before is None else before, node_id, new, users=users)
     return change, impact(nodes, project_root, change)

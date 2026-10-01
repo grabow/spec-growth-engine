@@ -10,6 +10,7 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -257,6 +258,7 @@ class Cockpit(tk.Tk):
         self._graph_root: str | None = None  # root the view state belongs to
         self._run: dict | None = None        # the run in progress, if any
         self._checking = False               # a goal check in progress (check_goal)
+        self._chain: dict | None = None      # Codex Affected in progress, if any
         self._run_win: tk.Toplevel | None = None  # the last run's window, hidden or not
         self._save_config()  # persist the resolved root
         self._update_title()
@@ -387,10 +389,12 @@ class Cockpit(tk.Tk):
                       ("Refresh Manuals", self.refresh_manuals),
                       ("Reload", self.reload_and_refresh)])
         menu("Node", [("Show Tree", self.show_node_tree), None,
-                      ("New Node", self.new_node), ("Delete Node", self.delete_node)])
+                      ("New Node", self.new_node), ("Rename Node...", self.rename_node),
+                      ("Delete Node", self.delete_node)])
         menu("Arch", [("Edit Arch", self.load_arch), ("Save Arch", self.save_arch)])
         menu("Spec", [("Load Spec", self.load_spec), ("Save Spec", self.save_spec)])
         menu("Build", [("Build Context", self.build_ctx), ("Codex", self.run_agent),
+                       ("Codex Affected...", self.code_affected),
                        ("Run Tests", self.run_tests_action), None,
                        ("Edit Goal (TASK.md)...", self.edit_goal),
                        ("Check Goal (TASK.md)", self.check_goal),
@@ -695,6 +699,49 @@ class Cockpit(tk.Tk):
                "C owns it from its first run." if seed else "")
             + "\nDescribe the intent and click 'Draft ⟶'.",
         )
+
+    def rename_node(self) -> None:
+        """Rename the target node and its subtree (engine/nodes.rename_node): the
+        plan is shown first -- which ids change, which SPEC.md files move, which
+        are rewritten -- and nothing happens until H says yes. The code is not
+        touched: renaming a node never re-points its globs."""
+        if self._run_busy("Renaming a node"):
+            return
+        nid = self._target()
+        if nid not in self.nodes:
+            messagebox.showinfo("Rename node", "Pick an existing target node first.")
+            return
+        if self._unsaved_spec():
+            self._set(self.guidance, f"The editor holds a spec of {self._unsaved_spec()} "
+                                     "that is not saved -- Save it, or pick the node "
+                                     "again to discard it, before renaming.")
+            return
+        from tkinter import simpledialog
+        new = simpledialog.askstring(
+            "Rename node", f"New LAST part of the id of {nid}\n"
+            "(the id becomes <parent>.<this>; its subtree follows):",
+            initialvalue=nid.rsplit(".", 1)[-1], parent=self)
+        if not new or not new.strip():
+            return
+        try:
+            plan = nodeops.rename_plan(self.root_dir, nid, new, self.nodes)
+        except ValueError as exc:
+            messagebox.showerror("Rename node", str(exc))
+            return
+        if not messagebox.askyesno(
+                "Rename node",
+                "\n".join([*(f"{o}  ->  {n}" for o, n in plan["ids"].items()), "",
+                            f"{len(plan['moves'])} SPEC.md file(s) move, "
+                            f"{len(plan['rewritten'])} are rewritten "
+                            "(id, parent, depends_on, children).",
+                            "The code stays where it is.", "", "Rename?"])):
+            return
+        result = nodeops.rename_node(self.root_dir, nid, new, self.nodes,
+                                     by=getpass.getuser())
+        self.reload_and_refresh()
+        self.target.set(result["ids"][nid])
+        self.load_spec()
+        self._set(self.guidance, nodeops.rename_text(result))
 
     def delete_node(self) -> None:
         nid = self._target()
@@ -2019,8 +2066,9 @@ class Cockpit(tk.Tk):
         an on/off switch for something that stops by itself. What it offers is
         HOW it runs: supervised (on), or unsupervised -- H' answers for you
         between rounds, and you review it afterwards (engine/unsupervised.py)."""
-        if self._run:
-            self._set(self.guidance, "A run is already in progress in this cockpit.")
+        if self._run or self._chain:
+            self._set(self.guidance, "A run or Codex Affected is already in progress in "
+                                     "this cockpit.")
             return
         if self._checking:
             self._set(self.guidance, "A check is running -- start the run when it is done.")
@@ -2190,16 +2238,139 @@ class Cockpit(tk.Tk):
         self._render_autonomy()
 
     def _run_busy(self, what: str, parent=None) -> bool:
-        """True, and says so, while a run is in progress."""
-        if not self._run:
+        """True, and says so, while a run -- or Codex Affected -- is in progress."""
+        if self._chain:
+            message = (f"Codex Affected is coding ({self._chain['step']}). {what} would "
+                       "write the same files. Wait for it to end -- its window says when.")
+        elif self._run:
+            message = (f"A run is in progress (round {max(self._run['round'], 1)}). {what} "
+                       "would write the same files. Wait for the run to end -- its window "
+                       "says when.")
+        else:
             return False
-        message = (f"A run is in progress (round {max(self._run['round'], 1)}). {what} would "
-                   "write the same files. Wait for the run to end -- its window says when.")
         if parent is not None:
             messagebox.showinfo("A run is in progress", message, parent=parent)
         else:
             self._set(self.guidance, message)
         return True
+
+    def code_affected(self) -> None:
+        """C implements the target node AND whoever uses it -- its consumers by
+        depends_on, the ancestors whose code imports it -- one after the other,
+        what a node uses first; then the tests, the whole build, and the gate.
+        The same as Codex on each in turn and Run Tests after: the list and the
+        order are what it adds. It runs `cli.py code ROOT ID --affected` as a
+        process of its own, shown like a run: the writers are locked while C
+        writes, and Close only hides the window."""
+        if self._run_busy("Codex Affected"):
+            return
+        if self._checking:
+            self._set(self.guidance, "A check is running -- start this when it is done.")
+            return
+        nid = self._target()
+        if nid not in self.nodes:
+            self._set(self.guidance, "Pick an existing target node first.")
+            return
+        if self._unsaved_spec():
+            self._set(self.guidance, f"The editor holds a spec of {self._unsaved_spec()} "
+                                     "that is not saved, and C implements the SAVED one. "
+                                     "'Save' first -- or pick the node again to discard it.")
+            return
+        lacking = llm.missing("coder")
+        if lacking:
+            self._set(self.guidance, "The coder cannot start: fix " + ", ".join(lacking)
+                      + " in cockpit/.env")
+            return
+        order = changeset.affected(self.nodes, self.root_dir, nid)
+        if not messagebox.askyesno(
+                "Codex Affected",
+                "C implements, one after the other:\n"
+                + "\n".join(f"  {i}. {n}" for i, n in enumerate(order, 1))
+                + "\n\nthen the tests -- the whole build -- and the gate. It stops at "
+                  "the first node C fails on.\n\nStart?"):
+            return
+        argv = [sys.executable, str(Path(__file__).resolve().parent / "cli.py"),
+                "code", self.root_dir, nid, "--affected"]
+        try:
+            proc = subprocess.Popen(argv, cwd=self.root_dir, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                    text=True, bufsize=1)
+        except OSError as exc:
+            self._set(self.guidance, f"Codex Affected could not start: {exc}")
+            return
+        self._open_affected_window(proc, order)
+
+    def _open_affected_window(self, proc, order: list[str]) -> None:
+        if self._run_win is not None:   # one window for the last long job, like a run
+            try:
+                self._run_win.destroy()
+            except tk.TclError:
+                pass
+        win = tk.Toplevel(self)
+        win.title(f"Codex Affected - {self.root_dir}")
+        win.geometry("1000x700")
+        win.protocol("WM_DELETE_WINDOW", win.withdraw)
+        self._run_win = win
+        status = ttk.Label(win, anchor="w", font=MONO, foreground="#0a7d00")
+        status.pack(side="top", fill="x", padx=4, pady=(4, 0))
+        bar = ttk.Frame(win)
+        bar.pack(side="bottom", fill="x", padx=4, pady=4)
+        ttk.Button(bar, text="Close", command=win.withdraw).pack(side="right")
+        out = ScrolledText(win, font=MONO, wrap="none")
+        out.pack(side="top", fill="both", expand=True)
+        out.insert("end", f"===== CODEX AFFECTED   {' -> '.join(order)}   "
+                          f"pid: {proc.pid} =====\n")
+        st = {"proc": proc, "win": win, "out": out, "status": status, "order": order,
+              "step": f"1/{len(order)} {order[0]}", "verdict": "",
+              "start": time.monotonic(), "last_output": time.monotonic()}
+        self._chain = st
+        self._lock_for_run(True)
+        self._set(self.guidance, f"Codex Affected: C codes {', '.join(order)}, in that "
+                                 "order, then the tests and the gate run. Draft, Revise and "
+                                 "Save are locked while C writes. Closing the window only "
+                                 "hides it: Build > Show Run Window brings it back.")
+        threading.Thread(target=self._affected_read, args=(proc.stdout, st), daemon=True).start()
+        self._monitor_affected(st)
+
+    def _affected_read(self, stream, st: dict) -> None:
+        for line in stream:
+            st["last_output"] = time.monotonic()
+            m = re.match(r"===== (\d+/\d+)  C implements (\S+) =====", line)
+            if m:
+                st["step"] = f"{m.group(1)} {m.group(2)}"
+            if line.startswith("AFFECTED "):
+                st["verdict"] = line.strip()
+            self.after(0, self._append_out, st["out"], line)
+        st["proc"].wait()
+        self.after(0, self._affected_finished, st)
+
+    def _monitor_affected(self, st: dict) -> None:
+        try:
+            if st["proc"].poll() is None and self._chain is st:
+                st["status"].config(
+                    foreground="#0a7d00",
+                    text=f"CODING  {st['step']}   elapsed "
+                         f"{self._fmt(time.monotonic() - st['start'])}   last output "
+                         f"{self._fmt(time.monotonic() - st['last_output'])} ago")
+                st["win"].after(1000, self._monitor_affected, st)
+        except tk.TclError:
+            return
+
+    def _affected_finished(self, st: dict) -> None:
+        self._chain = None
+        self._lock_for_run(False)
+        self._reload_quiet()
+        self._update_requests_badge()
+        verdict = st["verdict"] or f"AFFECTED ENDED: exit {st['proc'].returncode}"
+        try:
+            st["status"].config(foreground="#000000" if "DONE" in verdict else "#b00000",
+                                text=verdict)
+        except tk.TclError:
+            pass
+        self._set(self.guidance, verdict + (
+            "\nEverything it reached is coded, built and gated. Check Goal tells whether "
+            "the whole still meets TASK.md." if "DONE" in verdict else
+            "\nThe window says where it stopped; the gate and Requests say what is open."))
 
     def run_agent(self) -> None:
         if self._run_busy("The coder"):

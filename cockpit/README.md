@@ -651,6 +651,18 @@ deleted from the cockpit:
   list of files given to such a run. Without a manifest there is no build root, and
   without a build root nothing records test evidence. Freeform seeds neither. Then
   fill it via **Draft ⟶**.
+- **Rename Node...** - a new last id part for the target node. It shows the plan
+  first -- which ids change (the subtree follows: `core.sound.player.x` becomes
+  `core.sound.loader.x`), which SPEC.md files move, which are rewritten -- and
+  does nothing until you say yes. Every field that names a renamed id follows:
+  `id`, `parent`, `depends_on`, `design.children`, a decision request's
+  `target`. Only the SPEC.md files move; the code stays where it is, and its
+  globs keep naming the same files -- to rename the code as well, Revise the
+  globs and let Codex move it. Prose that still names an old id (a spec's text,
+  ARCHITECTURE.md, TASK.md) is listed, not rewritten. The growth record gets a
+  `renamed` entry, so a node's history does not end at its old name. After it:
+  Run Tests (evidence is kept per id), then Validate -- a renamed node others
+  depended on is a HARD change you accept. Headless: `cli.py rename ROOT ID NEW`.
 - **Delete node** - removes the node's SPEC.md (and its now-empty directory) and
   drops it from the parent's `children`. A node with children is refused unless
   you confirm a **recursive** delete (subtree, post-order). Any nodes that still
@@ -662,7 +674,11 @@ Equivalent engine API (used by the GUI):
 from engine import parser, nodes
 n = parser.load_nodes("example")
 nid, path = nodes.new_node("api", "discount", "component", n)   # -> api.discount
-removed, dependents = nodes.delete_node("api.discount", n)       # recursive=True for subtrees
+n = parser.load_nodes("example")
+plan = nodes.rename_plan("example", "api.discount", "rebate", n)  # what would change; nothing done
+done = nodes.rename_node("example", "api.discount", "rebate", n)  # -> api.rebate
+n = parser.load_nodes("example")
+removed, dependents = nodes.delete_node("api.rebate", n)          # recursive=True for subtrees
 ```
 
 ## Workflow (maps to the paper)
@@ -721,9 +737,12 @@ removed, dependents = nodes.delete_node("api.discount", n)       # recursive=Tru
    already has: either would drop out of the graph without a word, and the code
    it claims would look orphaned with the cause nowhere.
    Before writing, Save computes the **change set** (`engine/changeset.py`): which
-   gate the change falls under and why, which nodes `depends_on` this one, which of
-   them mention a removed operation, and which evidence was recorded against the
-   old contract. A **HARD** change set -- a breaking change to a consumed contract
+   gate the change falls under and why, who uses this node -- the nodes that
+   `depends_on` it, and a parent component whose code imports it (it uses its
+   sub-component along the ownership line, where no `depends_on` may name it) --
+   which of them mention a removed operation, and which evidence was recorded
+   against the old contract. Its last line says what to re-code, in order:
+   `next: Codex core.sound.player, then core.sound -- then Run Tests`. A **HARD** change set -- a breaking change to a consumed contract
    or to a container, a new container, an id/kind/parent change, the root contract,
    a waiver grant -- asks you to confirm with that report in front of you. Draft
    and Revise show the same report in Guidance. Below its reasons the report
@@ -746,6 +765,14 @@ removed, dependents = nodes.delete_node("api.discount", n)       # recursive=Tru
    CPU, idle since last output) and an **Ask Codex** input box: type a follow-up and
    it replays the prior context + output with your message as a fresh `codex exec`
    run (it is single-shot, no live session). The agent runs in the node's build root.
+   **Codex Affected...** (Build menu) does the change set's `next` for the target:
+   C codes the node and whoever uses it, one after the other, what a node uses
+   first -- the list is shown before anything starts -- then the tests (the whole
+   build: `mvn test`, `cargo test`, `uv run pytest` ...) and the gate. It stops at
+   the first node C fails on. The same as Codex on each and Run Tests after; it is
+   the list and the order, done for you. It runs like a run: Draft, Revise and Save
+   are locked, Close hides its window, Build > Show Run Window brings it back.
+   Headless: `cli.py code ROOT ID --affected`.
 6. **Validate** - spec-side structural check (intent graph). Does NOT run tests.
 7. **Drift (code)** - code-side check: source imports vs declared `depends_on`.
    Import edges are detected per language: TS/JS (relative + require/dynamic),

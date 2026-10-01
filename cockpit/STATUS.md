@@ -84,7 +84,8 @@ engine/            deterministic, authors no intent
                    review as a HARD change to ARCHITECTURE.md) and decides what the
                    delegation lets it; `rework` says which answers send I back
   changeset.py     change set: which gate a SPEC.md change falls under (HARD/SOFT/AUTO/
-                   NONE) + consumer impact: who depends on it, who mentions what was
+                   NONE) + consumer impact: who uses it (depends_on, and an ancestor
+                   whose code imports it -- ancestor_users), who mentions what was
                    removed, which evidence was recorded against the old contract;
                    and what changed, entry by entry (- before, + after), each part
                    under its own gate, HARD first; declared protected zones
@@ -141,7 +142,8 @@ runlog.py          one readable line per event of a run's stream -- rendered onc
                    for the cockpit's Run window and the run's log (.sge/runs/NN.log)
 cli.py             headless gate: validate | drift | gate | init (lay a floor; --like OLD) |
                    manuals (render them again) | run (an agent, in rounds) |
-                   check (E + H' against TASK.md, no agent) |
+                   check (E + H' against TASK.md, no agent) | rename (a node and its
+                   subtree; every field naming it follows, the code stays) |
                    pending (H's inbox: waivers, decisions, HARD changes, delegated) | prepare |
                    decide | accept | reject | delegate | test | draft | revise | code | intents |
                    duplicates | index | install-hook
@@ -156,11 +158,14 @@ testrun.py         run the project's tests at the build root -> test evidence
 ```text
 GUI menus   Open     Open · New Project... (lays the floor) · New Project Like... ·
                      Refresh Manuals · Reload
-            Node     Show Tree · New Node · Delete Node
+            Node     Show Tree · New Node · Rename Node... (the plan first; the
+                     subtree and every edge follow, the code stays) · Delete Node
             Arch     Edit Arch · Save Arch
             Spec     Load Spec · Save Spec
             Build    Build Context (a read-only preview) · Codex (builds the context
-                     itself, from the saved specs) · Run Tests · Edit Goal (TASK.md)... ·
+                     itself, from the saved specs) · Codex Affected... (the node and
+                     whoever uses it, in order, then the tests and the gate) ·
+                     Run Tests · Edit Goal (TASK.md)... ·
                      Check Goal (TASK.md) (E + H', no agent) · Start Run... (an agent
                      writes the intent, in rounds) · Show Run Window
             Validate Requests... · Validate · Drift · Generate Index · Install Git Hook
@@ -186,6 +191,8 @@ CLI         uv run python cli.py {validate|drift|gate|pending|prepare|decide|tes
             uv run python cli.py draft ROOT ID --parent P --kind K --intent TEXT
             uv run python cli.py revise ROOT ID --change TEXT
             uv run python cli.py code ROOT ID [--instruction TEXT]
+            uv run python cli.py code ROOT ID --affected   (the node and whoever uses it,
+                                in order; then the tests and the gate)
             uv run python cli.py intents ROOT [ID]
 ```
 
@@ -295,8 +302,9 @@ Both are deterministic and block regardless of the autonomy switches.
   graded on "gate: PASS" optimises the gate, not the spec -- so a green gate is
   evidence about the graph's SHAPE, never about whether the contracts are right.
 - Bare/workspace-alias TS imports are not resolved (only relative specifiers).
-- No rename/move of nodes. dependents_of is shown only inside a change set
-  (Draft / Revise / Save), not as a view of its own.
+- A node can be renamed (Node > Rename Node..., `cli.py rename`), not MOVED to
+  another parent. dependents_of is shown only inside a change set (Draft /
+  Revise / Save), not as a view of its own.
 - A HARD change is never BLOCKED, only held: it stays pending and keeps its nodes
   from `verified`. That is deliberate (an unattended agent must keep working), and
   it means a project that never looks at `pending` accumulates them.

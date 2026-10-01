@@ -349,6 +349,7 @@ class _DraftCockpit(_Cockpit):
     _review = app.Cockpit._review
     _semantic = app.Cockpit._semantic
     _run = None                      # no run in progress: Draft is not locked
+    _chain = None                    # nor Codex Affected
     _run_busy = app.Cockpit._run_busy
 
     def __init__(self, root, level):
@@ -537,6 +538,7 @@ class _DraftOver:
     draft = app.Cockpit.draft
     _has_substance = staticmethod(app.Cockpit._has_substance)
     _run = None                      # no run in progress: Draft is not locked
+    _chain = None                    # nor Codex Affected
     _run_busy = app.Cockpit._run_busy
 
     def __init__(self, nodes, intent="log things"):

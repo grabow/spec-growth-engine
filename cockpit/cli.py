@@ -17,6 +17,8 @@ git pre-commit hook can refuse a commit that drifts spec from code.
   uv run python cli.py draft    ROOT ID --parent P --kind K --intent TEXT  # P drafts a node
   uv run python cli.py revise   ROOT ID --change TEXT                      # P revises a spec
   uv run python cli.py code     ROOT ID [--instruction TEXT]               # C implements
+  uv run python cli.py code     ROOT ID --affected   # ID and whoever uses it, in order,
+                                            # then the tests and the gate
   uv run python cli.py intents  ROOT [ID]   # the growth record: every intent, in order
   uv run python cli.py accept   ROOT ID... | --all [--by NAME]           # H accepts
   uv run python cli.py reject   ROOT ID... --reason TEXT [--by NAME]    # H rejects
@@ -26,6 +28,8 @@ git pre-commit hook can refuse a commit that drifts spec from code.
                                             # invariants, and record it as accepted
   uv run python cli.py init     ROOT --like OLD   # the same floor again, elsewhere
   uv run python cli.py manuals  ROOT        # re-render AGENTS.md / ORCHESTRATOR.md
+  uv run python cli.py rename   ROOT ID NEW [--by NAME]   # rename a node and its subtree;
+                                            # its code stays where it is
   uv run python cli.py check    ROOT [--task FILE]   # does it meet TASK.md? E measures,
                                             # H' checks the goal -- no agent, nothing changed
   uv run python cli.py run      ROOT [--unsupervised] [--max-rounds N] [--task FILE]
@@ -450,6 +454,36 @@ def cmd_code(root: str, nid: str, instruction: str | None) -> int:
     return code
 
 
+def cmd_code_affected(root: str, nid: str) -> int:
+    """C implements the node and whoever uses it -- its consumers by depends_on and
+    the ancestors whose code imports it -- one after the other, what a node uses
+    first (changeset.affected); then the tests, the whole build, and the gate.
+    It stops at the first node C fails on. The same as Codex on each of them in
+    turn, and Run Tests after: this is the order, done for you."""
+    from engine import changeset
+    nodes = _load(root)
+    if nid not in nodes:
+        print(f"error: no node {nid!r}", file=sys.stderr)
+        return 2
+    order = changeset.affected(nodes, root, nid)
+    print("affected, in order: " + ", ".join(order))
+    for i, node in enumerate(order, 1):
+        print(f"\n===== {i}/{len(order)}  C implements {node} =====", flush=True)
+        code = cmd_code(root, node, None)
+        if code != 0:
+            print(f"\nAFFECTED STOPPED at {node}: C ended with exit {code} -- "
+                  f"{', '.join(order[i:]) or 'nothing'} not coded")
+            return code
+    print("\n===== the tests: the whole build =====", flush=True)
+    tests = cmd_test(root)
+    print("\n===== the gate =====", flush=True)
+    gate = cmd_gate(root)
+    green = tests == 0 and gate == 0
+    print(f"\nAFFECTED {'DONE' if green else 'RED'}: {len(order)} node(s) coded; "
+          f"tests {'pass' if tests == 0 else 'FAIL'}, gate {'pass' if gate == 0 else 'BLOCKS'}")
+    return 0 if green else 1
+
+
 def cmd_decide(root: str) -> int:
     """Under the delegation: H' decides every pending HARD change in its scope that E found
     migrated. The gate never does this; it stays offline."""
@@ -537,6 +571,21 @@ def cmd_run(root: str, task: str | None, max_rounds: int, unsupervised: bool) ->
                              "--task", task or str(Path(root) / "TASK.md"),
                              "--max-rounds", str(max_rounds), "--readable",
                              *(["--unsupervised"] if unsupervised else [])])
+
+
+def cmd_rename(root: str, node_id: str, new: str, by: str | None) -> int:
+    """Rename a node and its subtree (engine/nodes.rename_node): every field that
+    names it follows, its SPEC.md files move, its code stays where it is."""
+    import getpass
+    from engine import nodes as nodeops
+    try:
+        result = nodeops.rename_node(root, node_id, new, _load(root),
+                                     by=by or getpass.getuser())
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(nodeops.rename_text(result))
+    return 0
 
 
 def cmd_check(root: str, task: str | None) -> int:
@@ -701,6 +750,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="out of scope: what nobody should grow; repeatable")
     sp = sub.add_parser("manuals")
     sp.add_argument("root")
+    sp = sub.add_parser("rename")
+    sp.add_argument("root")
+    sp.add_argument("id", help="the node to rename")
+    sp.add_argument("new", help="its new LAST id part (or the whole new id)")
+    sp.add_argument("--by", help="who renames it (default: the OS user)")
     sp = sub.add_parser("check")
     sp.add_argument("root")
     sp.add_argument("--task", help="the goal (default: ROOT/TASK.md)")
@@ -750,6 +804,9 @@ def main(argv: list[str] | None = None) -> int:
     sp.add_argument("root")
     sp.add_argument("id")
     sp.add_argument("--instruction", help="a note for C beyond the spec")
+    sp.add_argument("--affected", action="store_true",
+                    help="the node AND whoever uses it, in order, then the tests and "
+                         "the gate (changeset.affected)")
     sp = sub.add_parser("delegate")
     sp.add_argument("root")
     sp.add_argument("state", nargs="?", choices=("on", "off"))
@@ -772,6 +829,8 @@ def main(argv: list[str] | None = None) -> int:
                         args.always, args.out_of_scope, like=args.like)
     if args.cmd == "manuals":
         return cmd_manuals(args.root)
+    if args.cmd == "rename":
+        return cmd_rename(args.root, args.id, args.new, args.by)
     if args.cmd == "check":
         return cmd_check(args.root, args.task)
     if args.cmd == "run":
@@ -800,6 +859,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "revise":
         return cmd_revise(args.root, args.id, args.change)
     if args.cmd == "code":
+        if args.affected:
+            return cmd_code_affected(args.root, args.id)
         return cmd_code(args.root, args.id, args.instruction)
     if args.cmd == "intents":
         return cmd_intents(args.root, args.id)

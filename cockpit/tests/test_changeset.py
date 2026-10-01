@@ -390,3 +390,75 @@ def test_a_removed_promise_marks_its_key_breaking(graph_root):
     change = _classify(graph_root, "util", contract__provides=["log(level)"])   # reworded
     assert change["diff"]["provides"] == {"gate": "HARD", "removed": ["log()"],
                                           "added": ["log(level)"]}
+
+
+# ---- a parent that uses its sub-component is its consumer ---------------------
+
+def test_a_parent_whose_code_imports_its_sub_component_is_a_consumer(tmp_path):
+    """core.sound uses core.sound.player along the ownership line -- never through
+    depends_on (that would be an error) -- so dependents_of cannot name it. The
+    import edges can: a breaking change to the child reaches the parent."""
+    from tests.test_evidence import _line
+    nodes = _line(tmp_path)                      # svc.rules' step.py imports svc.angle
+    users = changeset.ancestor_users(nodes, tmp_path)
+    assert users == {"svc.angle": ["svc.rules"]}
+    new = {k: v for k, v in nodes["svc.angle"].items() if not k.startswith("_")}
+    new["contract"] = {"provides": ["angle(degrees)"]}            # reworded: breaking
+    change = changeset.classify(nodes, "svc.angle", new, users=users)
+    assert change["consumers"] == ["svc.rules"] and change["gate"] == "HARD"
+    assert changeset.classify(nodes, "svc.angle", new)["gate"] == "SOFT"   # without: blind
+
+
+def test_a_parent_that_does_not_import_it_is_no_consumer(tmp_path):
+    from tests.test_evidence import _line
+    nodes = _line(tmp_path)
+    (tmp_path / "svc/rules/src/step.py").write_text("x = 1\n", encoding="utf-8")
+    assert changeset.ancestor_users(nodes, tmp_path) == {}
+
+
+def test_affected_puts_what_a_node_uses_first(tmp_path):
+    from tests.test_evidence import _line
+    nodes = _line(tmp_path)
+    assert changeset.affected(nodes, tmp_path, "svc.angle") == ["svc.angle", "svc.rules"]
+    assert changeset.affected(nodes, tmp_path, "svc.rules") == ["svc.rules"]
+
+
+def test_the_report_says_what_to_code_next_and_in_which_order(tmp_path):
+    from tests.test_evidence import _line
+    nodes = _line(tmp_path)
+    text = (tmp_path / "svc/angle/SPEC.md").read_text(encoding="utf-8").replace(
+        "angle()", "angle(degrees)")
+    change, reach = changeset.assess(nodes, tmp_path, "svc.angle", text)
+    report = changeset.report(change, reach)
+    assert ("next: Codex svc.angle, then svc.rules -- then Run Tests, the whole build "
+            "(Build > Codex Affected does it in this order)") in report
+
+
+def test_no_next_when_only_the_status_moved(graph_root):
+    nodes = _nodes(graph_root)
+    head, sep, body = (graph_root / "util" / "SPEC.md").read_text(
+        encoding="utf-8").partition("\n---\n\n")
+    change, reach = changeset.assess(nodes, graph_root, "util",
+                                     head + "\nstatus: implemented" + sep + body)
+    assert change["diff"] == {"status": {"gate": "AUTO", "removed": [],
+                                         "added": ["implemented"]}}
+    assert reach["next"] == [] and "next:" not in changeset.report(change, reach)
+
+
+def test_cli_codes_the_affected_in_order_then_builds_and_gates(tmp_path, monkeypatch, capsys):
+    import cli
+    from tests.test_evidence import _line
+    _line(tmp_path)
+    coded = []
+    monkeypatch.setattr(cli, "cmd_code", lambda root, nid, instr: coded.append(nid) or 0)
+    monkeypatch.setattr(cli, "cmd_test", lambda root: 0)
+    monkeypatch.setattr(cli, "cmd_gate", lambda root: 0)
+    assert cli.main(["code", str(tmp_path), "svc.angle", "--affected"]) == 0
+    assert coded == ["svc.angle", "svc.rules"]
+    assert "AFFECTED DONE: 2 node(s) coded; tests pass, gate pass" in capsys.readouterr().out
+
+    coded.clear()
+    monkeypatch.setattr(cli, "cmd_code", lambda root, nid, instr: coded.append(nid) or 1)
+    assert cli.main(["code", str(tmp_path), "svc.angle", "--affected"]) == 1
+    assert coded == ["svc.angle"]                                   # stopped at the first
+    assert "AFFECTED STOPPED at svc.angle" in capsys.readouterr().out

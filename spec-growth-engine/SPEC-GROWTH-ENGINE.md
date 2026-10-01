@@ -106,7 +106,8 @@ So this line is a CONVENTION that the tooling relies on but does not check.
 A node's `code` globs resolve against the PROJECT ROOT, never against the folder
 its SPEC.md sits in. Spec tree and code tree are independent layouts over the
 same project: the id says where a node sits in the architecture, the glob says
-which files realize it. Moving a SPEC.md therefore never re-points ownership.
+which files realize it. Moving a SPEC.md therefore never re-points ownership -- which is what lets a
+node be RENAMED (engine/nodes.rename_node) by moving its SPEC.md files alone.
 ```
 
 ### 3.2b Container code layout — CANONICAL  *(elaborated in CONCEPT §7a)*
