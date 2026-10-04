@@ -755,6 +755,45 @@ def code_affected_codes_in_order_and_locks():
     _check(len(started) == 1, "a no still started it")
 
 
+def find_in_any_text():
+    """Cmd+F / Ctrl+F finds in a text: every match marked, the current one counted,
+    Enter and Shift+Enter step through, read-only text too, Esc clears the marks.
+    With the focus on a button it searches the biggest text of that window."""
+    import types
+    import app
+    c = _cockpit()
+    _check(c.bind_class("Text", c.find_key), "no find key on text widgets")
+    c._preview("alpha beta\nAlpha gamma\nnothing\nALPHA")      # read-only, too
+    box = app.FindBox.show(c.view)
+    box.var.set("alpha")
+    _check(box.count.cget("text") == "1 of 3", box.count.cget("text"))
+    _check(len(c.view.tag_ranges("find")) == 6, "not every match is marked")
+    box.next()
+    box.next()
+    _check(box.count.cget("text") == "3 of 3", box.count.cget("text"))
+    box.next()
+    _check(box.count.cget("text") == "1 of 3", "next does not wrap around")
+    box.prev()
+    _check(box.count.cget("text") == "3 of 3", "prev does not wrap around")
+    _check(app.FindBox.show(c.view) is box, "a second Cmd+F opened a second box")
+    box.var.set("zebra")
+    _check(box.count.cget("text") == "not found", box.count.cget("text"))
+    box.close()
+    _check(not c.view.tag_ranges("find") and not c.view.tag_ranges("find_current"),
+           "closing left marks behind")
+
+    (c.proj / "TASK.md").write_text("# Task\n\nfind me here\n", encoding="utf-8")
+    c.edit_goal()
+    _settle(c)
+    win = [w for w in c.winfo_children() if isinstance(w, tk.Toplevel)][-1]
+    button = next(w for w in _walk(win) if isinstance(w, ttk.Button))
+    c._find_in_window(types.SimpleNamespace(widget=button))
+    box = app.FindBox._open.get(str(win._editor))
+    _check(box is not None, "Cmd+F on a button did not search the window's editor")
+    box.var.set("find me")
+    _check(box.count.cget("text") == "1 of 1", box.count.cget("text"))
+
+
 def edit_goal_with_p():
     """For a project that exists: TASK.md in an editor, P's proposal in its place,
     written only by Save."""
@@ -800,7 +839,8 @@ SCENARIOS = {f.__name__: f for f in (badge, validate, grant, invalid_grant, stal
                                      codex_builds_its_context,
                                      check_goal_says_the_verdict,
                                      rename_node_shows_the_plan_first,
-                                     code_affected_codes_in_order_and_locks)}
+                                     code_affected_codes_in_order_and_locks,
+                                     find_in_any_text)}
 
 if __name__ == "__main__":
     SCENARIOS[sys.argv[1]]()

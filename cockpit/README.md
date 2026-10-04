@@ -681,6 +681,13 @@ n = parser.load_nodes("example")
 removed, dependents = nodes.delete_node("api.rebate", n)          # recursive=True for subtrees
 ```
 
+**Find, in every text.** Cmd+F (macOS) or Ctrl+F opens a small find box for the
+text that has the focus -- the editor, Guidance, Intent, Edit Goal, a run's or
+Codex's window; with the focus on a button, for the biggest text of that window.
+Every match is marked and counted ("3 of 12"), Enter goes to the next, Shift+Enter
+to the previous, Esc closes and clears the marks. Case does not matter, and
+read-only text (a preview) is searched all the same.
+
 ## Workflow (maps to the paper)
 
 1. **New node** (or pick an existing target); describe the intent (language + examples).

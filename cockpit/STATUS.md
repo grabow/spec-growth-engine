@@ -170,7 +170,10 @@ GUI menus   Open     Open · New Project... (lays the floor) · New Project Like
                      writes the intent, in rounds) · Show Run Window
             Validate Requests... · Validate · Drift · Generate Index · Install Git Hook
             Registry Find Capability · Duplicates · Claim Capability
-GUI extras  Requests (n): H's inbox -- grant/reject waivers, accept/resolve/reject
+GUI extras  Cmd+F (macOS) / Ctrl+F in every text -- the editor, Guidance, Edit Goal,
+            a run's window: every match marked and counted, Enter / Shift+Enter
+            step through, Esc closes (FindBox)
+            Requests (n): H's inbox -- grant/reject waivers, accept/resolve/reject
             decision requests, prepare/accept/reject pending HARD changes;
             nodes awaiting H are amber in the graph
             Target box: picking a node loads its SPEC.md (asks before an unsaved

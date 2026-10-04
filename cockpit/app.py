@@ -94,6 +94,134 @@ def _spec_id(text: str) -> str:
 MONO = ("TkFixedFont", 12)
 
 
+class FindBox:
+    """Find in one text widget: every match marked, the current one shown and
+    counted ("3 of 12"); Enter for the next, Shift+Enter for the previous, Esc
+    closes. Case does not matter. Read-only text -- a preview, a run's window --
+    is searched all the same. One box per text widget: a second Cmd+F brings it
+    back with what it held."""
+
+    _open: dict[str, FindBox] = {}
+
+    @classmethod
+    def show(cls, text: tk.Text) -> FindBox:
+        box = cls._open.get(str(text))
+        try:
+            if box and box.win.winfo_exists():
+                box.win.deiconify()
+                box.win.lift()
+                box.entry.focus_set()
+                box.entry.select_range(0, "end")
+                return box
+        except tk.TclError:
+            pass
+        box = cls._open[str(text)] = cls(text)
+        return box
+
+    def __init__(self, text: tk.Text):
+        self.text = text
+        self.matches: list[tuple[str, str]] = []
+        self.current = -1
+        top = text.winfo_toplevel()
+        self.win = win = tk.Toplevel(top)
+        win.title("Find")
+        win.transient(top)
+        win.resizable(False, False)
+        self.var = tk.StringVar()
+        try:                                   # a one-line selection is what is meant
+            selected = text.get("sel.first", "sel.last")
+        except tk.TclError:
+            selected = ""
+        if selected and "\n" not in selected:
+            self.var.set(selected)
+        self.entry = ttk.Entry(win, textvariable=self.var, width=32)
+        self.entry.pack(side="left", padx=4, pady=4)
+        ttk.Button(win, text="\u2191", width=3, command=self.prev).pack(side="left")
+        ttk.Button(win, text="\u2193", width=3, command=self.next).pack(side="left")
+        self.count = ttk.Label(win, width=11)
+        self.count.pack(side="left", padx=4)
+        text.tag_configure("find", background="#fff3a0")
+        text.tag_configure("find_current", background="#ffb347")
+        text.tag_raise("find_current")
+        self.var.trace_add("write", lambda *_: self.search())
+        self.entry.bind("<Return>", lambda _e: self.next() or "break")
+        self.entry.bind("<Shift-Return>", lambda _e: self.prev() or "break")
+        self.entry.bind("<Escape>", lambda _e: self.close())
+        win.protocol("WM_DELETE_WINDOW", self.close)
+        try:                                   # at the top right of its window
+            win.geometry(f"+{top.winfo_rootx() + max(top.winfo_width() - 420, 0)}"
+                         f"+{top.winfo_rooty() + 8}")
+        except tk.TclError:
+            pass
+        self.entry.focus_set()
+        self.entry.select_range(0, "end")
+        self.search()
+
+    def search(self) -> None:
+        text, pattern = self.text, self.var.get()
+        text.tag_remove("find", "1.0", "end")
+        text.tag_remove("find_current", "1.0", "end")
+        self.matches, self.current = [], -1
+        start, length = "1.0", tk.IntVar()
+        while pattern:
+            pos = text.search(pattern, start, stopindex="end", nocase=True, count=length)
+            if not pos or not length.get():
+                break
+            end = f"{pos}+{length.get()}c"
+            self.matches.append((pos, end))
+            text.tag_add("find", pos, end)
+            start = end
+        if not self.matches:
+            self.count.config(text="not found" if pattern else "")
+            return
+        here = text.index("insert")             # the first match from the cursor on
+        self.current = next((i for i, (s, _) in enumerate(self.matches)
+                             if text.compare(s, ">=", here)), 0)
+        self._show()
+
+    def _show(self) -> None:
+        start, end = self.matches[self.current]
+        self.text.tag_remove("find_current", "1.0", "end")
+        self.text.tag_add("find_current", start, end)
+        self.text.mark_set("insert", start)     # typing on searches on from here
+        self.text.see(start)
+        self.count.config(text=f"{self.current + 1} of {len(self.matches)}")
+
+    def next(self) -> None:
+        if self.matches:
+            self.current = (self.current + 1) % len(self.matches)
+            self._show()
+
+    def prev(self) -> None:
+        if self.matches:
+            self.current = (self.current - 1) % len(self.matches)
+            self._show()
+
+    def close(self) -> None:
+        try:
+            self.text.tag_remove("find", "1.0", "end")
+            self.text.tag_remove("find_current", "1.0", "end")
+            self.win.destroy()
+        except tk.TclError:
+            pass
+        FindBox._open.pop(str(self.text), None)
+
+
+def _largest_text(window) -> tk.Text | None:
+    """The biggest text widget in `window` -- what Cmd+F means when the focus is
+    on a button: the editor of Edit Goal, the output of a run."""
+    found: list[tk.Text] = []
+
+    def walk(w):
+        if isinstance(w, tk.Text):
+            found.append(w)
+        for child in w.winfo_children():
+            if not isinstance(child, tk.Toplevel):
+                walk(child)
+    walk(window)
+    return max(found, key=lambda t: t.winfo_width() * t.winfo_height(), default=None)
+
+
 def _node_tree_children(nodes: dict[str, dict]) -> dict[str, list[str]]:
     """Return parent -> child node ids; missing parents are shown as root-level."""
     children: dict[str, list[str]] = {"": []}
@@ -408,6 +536,13 @@ class Cockpit(tk.Tk):
                           ("Duplicates", self.show_duplicates),
                           ("Claim Capability", self.claim_capability)])
         self.config(menu=menubar)
+        # Cmd+F (macOS) / Ctrl+F: find in whatever text has the focus -- in every
+        # window, the ones not yet opened too (a class binding); with the focus on
+        # a button, in the biggest text of that window
+        self.find_key = ("<Command-f>" if self.tk.call("tk", "windowingsystem") == "aqua"
+                         else "<Control-f>")
+        self.bind_class("Text", self.find_key, lambda e: FindBox.show(e.widget) and "break")
+        self.bind_all(self.find_key, self._find_in_window)
 
     def reload_nodes(self) -> None:
         self.nodes = parser.load_nodes(self.root_dir)
@@ -764,6 +899,13 @@ class Cockpit(tk.Tk):
         if deps:
             msg += f"\nWARNING: still referenced by depends_on of: {deps}"
         self._set(self.guidance, msg)
+
+    def _find_in_window(self, event) -> str | None:
+        target = _largest_text(event.widget.winfo_toplevel())
+        if target is not None:
+            FindBox.show(target)
+            return "break"
+        return None
 
     @staticmethod
     def _set(widget: ScrolledText, text: str) -> None:
