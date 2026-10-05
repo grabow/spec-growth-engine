@@ -512,8 +512,10 @@ def test_the_offline_way_claims_no_model_and_the_engine_backs_it():
     ways = " ".join(_four_ways().split())
     assert "No key, no endpoint" in ways
     source = Path(cli.__file__).read_text(encoding="utf-8")
-    gate = source[source.index("def cmd_gate"):source.index("def _report_accepted")]
+    gate = source[source.index("def cmd_gate"):source.index("def cmd_pending")]
     assert "_load_env" not in gate and "agent" not in gate
+    engine_gate = (COCKPIT / "engine" / "gate.py").read_text(encoding="utf-8")
+    assert not re.search(r"^\s*(from|import) (agent|\.\w*llm)", engine_gate, re.M)  # no model
 
 
 # ---- the autonomy switches have one set of names ------------------------------

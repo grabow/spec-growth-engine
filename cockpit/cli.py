@@ -28,6 +28,8 @@ git pre-commit hook can refuse a commit that drifts spec from code.
                                             # invariants, and record it as accepted
   uv run python cli.py init     ROOT --like OLD   # the same floor again, elsewhere
   uv run python cli.py manuals  ROOT        # re-render AGENTS.md / ORCHESTRATOR.md
+  uv run python cli.py find     ROOT WORDS    # the words in TASK.md, ARCHITECTURE.md and
+                                            # every SPEC.md: where:line: text
   uv run python cli.py compact  ROOT ID [--force]   # P: the same spec in fewer words;
                                             # refused if a provides name would go
   uv run python cli.py rename   ROOT ID NEW [--by NAME]   # rename a node and its subtree;
@@ -108,36 +110,12 @@ def cmd_drift(root: str) -> int:
 
 
 def cmd_gate(root: str) -> int:
-    """The commit gate: structure AND code drift must both pass."""
-    nodes = _load(root)
-    v = validate.run(nodes, root)
-    d = drift.run(nodes, root)
-    print(v)
-    print()
-    print(d)
-    blocked = _blocked(v) or _blocked(d)
-    print()
-    print(f"==> spec-growth-engine gate: {'BLOCK' if blocked else 'PASS'}")
-    _report_accepted(nodes, root, clear=not blocked)
-    return 1 if blocked else 0
-
-
-def _report_accepted(nodes: dict, root: str, clear: bool) -> None:
-    """After the verdict: what E accepted on this PASS, and what still waits for H."""
-    if not accepted.tracked(root):
-        print("accepted: not tracked -- `accept ROOT --all` records HARD changes from now on")
-        return
-    try:
-        cleared = accepted.clear(nodes, root) if clear else []
-        waiting = [c["node"] for c in accepted.pending(nodes, root)]
-    except accepted.Unreadable:
-        return   # validate reported it as a HARD error, which blocked the gate
-    if cleared:
-        print(f"accepted: E cleared {len(cleared)} change(s) at SOFT or below: "
-              + ", ".join(f"{n} ({g})" for n, g in cleared))
-    if waiting:
-        print(f"accepted: HARD pending, awaiting H: {', '.join(waiting)} "
-              "(`pending ROOT` shows the impact)")
+    """The commit gate: structure AND code drift must both pass; on a pass, E
+    clears what it may (engine/gate.py -- the cockpit's Validate > Gate too)."""
+    from engine import gate
+    result = gate.run(_load(root), root)
+    print(gate.text(result))
+    return 1 if result["blocked"] else 0
 
 
 def cmd_pending(root: str) -> int:
@@ -623,6 +601,16 @@ def cmd_rename(root: str, node_id: str, new: str, by: str | None) -> int:
     return 0
 
 
+def cmd_find(root: str, query: str) -> int:
+    """Words in TASK.md, ARCHITECTURE.md and every SPEC.md -- the cockpit's Find in
+    Specs: one `where:line: text` per hit. 0 when found, 1 when not."""
+    from engine import search
+    hits = search.find(root, _load(root), query)
+    for hit in hits:
+        print(f"{hit['where']}:{hit['line']}: {hit['text']}")
+    return 0 if hits else 1
+
+
 def cmd_check(root: str, task: str | None) -> int:
     """Does the project meet its goal, as it stands? E runs the tests and the gate,
     and on a green floor H' checks the result against TASK.md -- no agent, no
@@ -793,6 +781,9 @@ def main(argv: list[str] | None = None) -> int:
                     help="out of scope: what nobody should grow; repeatable")
     sp = sub.add_parser("manuals")
     sp.add_argument("root")
+    sp = sub.add_parser("find")
+    sp.add_argument("root")
+    sp.add_argument("query", help="words to find, case ignored")
     sp = sub.add_parser("compact")
     sp.add_argument("root")
     sp.add_argument("id")
@@ -877,6 +868,8 @@ def main(argv: list[str] | None = None) -> int:
                         args.always, args.out_of_scope, like=args.like)
     if args.cmd == "manuals":
         return cmd_manuals(args.root)
+    if args.cmd == "find":
+        return cmd_find(args.root, args.query)
     if args.cmd == "compact":
         return cmd_compact(args.root, args.id, args.force)
     if args.cmd == "rename":

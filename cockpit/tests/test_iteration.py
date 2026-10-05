@@ -763,3 +763,26 @@ def test_cli_check_says_done_with_0_and_needs_a_goal(tmp_path, monkeypatch, caps
     said = capsys.readouterr()
     assert "CHECK     GAPS -- w" in said.out
     assert "[2/2] H' reads TASK.md against the result ..." in said.err   # it said so
+
+
+def test_a_gap_says_where_it_sits_and_the_line_it_starts_on(graph_root):
+    """H' quotes a few words from where a gap sits; the check looks them up, so
+    the human can open the place -- and says so when the words are not there."""
+    from agent import reviewer
+    where = reviewer._where([{"gap": 1, "in": "api.hello", "quote": "greet prints hallo"},
+                             {"gap": 1, "in": "util", "quote": "words that are not there"},
+                             {"gap": 1, "in": "no.such.node", "quote": "x"},
+                             {"gap": 7, "in": "util", "quote": "past the gaps"},
+                             {"gap": "one", "in": "util"}, "not a dict"], gaps=1)
+    assert [w["in"] for w in where] == ["api.hello", "util", "no.such.node"]
+    goal = {"gaps": ["greet -- says hallo, the task wants hello"], "waiting": [],
+            "closed": [], "model": "m", "where": where}
+    result, _ = _check(graph_root, _GREEN, goal)
+    assert [w["in"] for w in result["where"]] == ["api.hello", "util"]  # no file: dropped
+    found, missing = result["where"]
+    spec = (graph_root / "api" / "hello" / "SPEC.md").read_text(encoding="utf-8")
+    assert "greet prints hallo" in spec.splitlines()[found["line"] - 1]
+    text = orchestrate.check_text(result)
+    assert (f'gap       greet -- says hallo, the task wants hello\n'
+            f'  in      api.hello  line {found["line"]}  "greet prints hallo"') in text
+    assert '  in      util  (not found verbatim)  "words that are not there"' in text

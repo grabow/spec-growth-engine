@@ -163,7 +163,7 @@ def check(root: str, task: str, *, check_floor=floor, check_goal=goal,
     waits = [f"{it['type']:8} {it['node']} -> {it['subject']}"
              for it in inbox.pending(parser.load_nodes(root), root)]
     out = {"failures": [], "gaps": [], "waiting": [], "closed": [], "summary": "",
-           "requests": waits, "model": ""}
+           "requests": waits, "model": "", "where": []}
     if not fl["green"]:
         return {**out, "verdict": "red", "failures": iteration.failures(fl),
                 "why": "the tests or the gate fail -- H' is not asked about a red floor"}
@@ -175,7 +175,8 @@ def check(root: str, task: str, *, check_floor=floor, check_goal=goal,
                        f"{gl['unavailable']}"}
     out.update(gaps=gl.get("gaps") or [], waiting=gl.get("waiting") or [],
                closed=gl.get("closed") or [], summary=gl.get("summary") or "",
-               model=gl.get("model") or "")
+               model=gl.get("model") or "",
+               where=_located(root, gl.get("where") or []))
     if out["gaps"]:
         return {**out, "verdict": "gaps",
                 "why": f"the floor is green, but H' names {len(out['gaps'])} gap(s) "
@@ -187,11 +188,33 @@ def check(root: str, task: str, *, check_floor=floor, check_goal=goal,
             "why": "the tests and the gate pass, H' finds no gap, nothing waits for you"}
 
 
+def _located(root: str, where: list[dict]) -> list[dict]:
+    """H''s places for the gaps, each looked up (engine/search.locate): the file it
+    names and the line the quoted words start on -- None when they are not there
+    verbatim. A place naming no file is dropped."""
+    from engine import search
+    nodes = parser.load_nodes(root)
+    out = []
+    for w in where:
+        at = search.locate(root, nodes, w["in"], w["quote"])
+        if at is not None:
+            out.append({**w, "file": at["file"], "line": at["line"]})
+    return out
+
+
+def location_line(loc: dict) -> str:
+    """One place a gap sits, as check_text writes it -- and the cockpit finds it again."""
+    at = f"line {loc['line']}" if loc.get("line") else "(not found verbatim)"
+    return f"  in      {loc['in']}  {at}  \"{loc['quote']}\""
+
+
 def check_text(result: dict) -> str:
     """The check, one line per finding -- for the cockpit and `cli.py check`."""
     lines = [f"CHECK     {result['verdict'].upper()} -- {result['why']}"]
     lines += [f"failing   {x}" for x in result["failures"]]
-    lines += [f"gap       {x}" for x in result["gaps"]]
+    for n, gap in enumerate(result["gaps"], 1):
+        lines.append(f"gap       {gap}")
+        lines += [location_line(w) for w in result.get("where") or [] if w["gap"] == n]
     lines += [f"waits H   {x}" for x in result["waiting"]]
     lines += [f"asks H    {x}" for x in result["requests"]]
     lines += [f"closed    {x}" for x in result["closed"]]

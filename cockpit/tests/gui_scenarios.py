@@ -845,6 +845,71 @@ def compact_shows_a_draft_and_a_lost_promise():
            c.guidance.get("1.0", "end"))
 
 
+def find_in_specs_and_open_a_gap():
+    """Find in Specs lists every line holding the words -- specs and TASK.md -- and a
+    double-click opens it, marked; a gap Check Goal locates is a link to its place."""
+    import types
+    import app
+    c = _cockpit()
+    app.threading = types.SimpleNamespace(Thread=_InlineThread)
+    c.after = lambda ms, fn, *args: fn(*args)
+    (c.proj / "TASK.md").write_text("# Task\n\n- the window is drawn with tkinter\n",
+                                    encoding="utf-8")
+    win = c.find_in_specs("tkinter")
+    rows = {win._tree.item(i, "values")[0]: i for i in win._tree.get_children()}
+    _check({"TASK.md", "svc.tkwin"} <= set(rows), f"hits: {sorted(rows)}")
+
+    win._tree.focus(rows["svc.tkwin"])
+    win._open()
+    _check("id: svc.tkwin" in c.view.get("1.0", "end"), "the spec was not opened")
+    marked = c.view.tag_ranges("find_current")
+    _check(marked and "tkinter" in c.view.get(marked[0], marked[1]).lower(),
+           "the words are not marked")
+
+    win._tree.focus(rows["TASK.md"])
+    win._open()
+    goal = [w for w in c.winfo_children() if getattr(w, "_editor", None)][-1]
+    _check(goal._editor.tag_ranges("find_current"), "TASK.md opened without the mark")
+
+    spec = c.proj / "gui" / "SPEC.md"
+    line = next(n for n, t in enumerate(spec.read_text().splitlines(), 1) if "choose()" in t)
+    app.orchestrate.check = lambda root, task, progress=None: {
+        "verdict": "gaps", "why": "1 gap", "failures": [], "waiting": [], "closed": [],
+        "summary": "", "requests": [], "model": "m",
+        "gaps": ["the waiver -- choose() still does not raise"],
+        "where": [{"gap": 1, "in": "svc.gui", "quote": "choose() does not raise",
+                   "file": "gui/SPEC.md", "line": line}]}
+    c.check_goal()
+    _check(c.guidance.tag_ranges("location0"), "the gap's place is no link")
+    _check("Click an `in` line" in c.guidance.get("1.0", "end"), "no word on the link")
+    _check(c._reveal("svc.gui", line, "choose() does not raise"), "the place did not open")
+    marked = c.view.tag_ranges("find_current")
+    _check(marked and c.view.get(marked[0], marked[1]).startswith("choose()"),
+           "the quoted words are not marked")
+
+
+def gate_clears_soft_and_shows_what():
+    """Validate > Gate: both checks; on a pass E clears what is at SOFT or below,
+    and the report in the editor shows each cleared change with its diff."""
+    import app
+    from engine import accepted
+    c = _cockpit()
+    accepted.accept_all(c.nodes, str(c.proj), by="setup")
+    gui = c.proj / "gui" / "SPEC.md"
+    gui.write_text(gui.read_text().replace("contract: {purpose: y}",
+                                           "contract: {purpose: y, provides: [choose()]}"),
+                   encoding="utf-8")                        # an addition: SOFT
+    c.run_gate()
+    said = c.guidance.get("1.0", "end")
+    _check("GATE PASS -- E cleared 1 change(s) at SOFT or below: svc.gui (SOFT)" in said, said)
+    report = c.view.get("1.0", "end")
+    _check("cleared by E on this PASS:" in report and "+ choose()" in report, report[-600:])
+    _check(str(c.view.cget("state")) == "disabled", "the report is editable")
+    c.run_gate()
+    _check("nothing was pending at SOFT or below" in c.guidance.get("1.0", "end"),
+           c.guidance.get("1.0", "end"))
+
+
 def edit_goal_with_p():
     """For a project that exists: TASK.md in an editor, P's proposal in its place,
     written only by Save."""
@@ -892,7 +957,9 @@ SCENARIOS = {f.__name__: f for f in (badge, validate, grant, invalid_grant, stal
                                      rename_node_shows_the_plan_first,
                                      code_affected_codes_in_order_and_locks,
                                      find_in_any_text,
-                                     compact_shows_a_draft_and_a_lost_promise)}
+                                     compact_shows_a_draft_and_a_lost_promise,
+                                     find_in_specs_and_open_a_gap,
+                                     gate_clears_soft_and_shows_what)}
 
 if __name__ == "__main__":
     SCENARIOS[sys.argv[1]]()

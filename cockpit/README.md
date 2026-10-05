@@ -625,8 +625,12 @@ deleted from the cockpit:
   (`cli.py check` says the steps on stderr). The verdict then goes to Guidance: **done** (green, no gap, nothing waits for you), **gaps**
   (with the list), **asking** (something waits in Requests -- a pending HARD
   change counts too), **red** (the failing tests and gate errors; H' is not
-  asked) or **unchecked** (H' not reachable). The use: after you worked through
-  the Requests, or changed something by hand. Headless: `cli.py check ROOT`.
+  asked) or **unchecked** (H' not reachable). Each gap says where it sits: H'
+  quotes a few words from the spec or TASK.md that shows it, the engine finds the
+  line (`in core.window  line 54  "generated in memory ..."`, or "not found
+  verbatim"), and a click on that line opens the place, the words marked. The
+  use: after you worked through the Requests, or changed something by hand.
+  Headless: `cli.py check ROOT`.
 - **Refresh Manuals** - renders `AGENTS.md` and `ORCHESTRATOR.md` again from the
   method's templates, after they changed. The copies are generated: an edit to
   them belongs in the template. Headless: `cli.py manuals ROOT`.
@@ -691,6 +695,14 @@ Codex's window; with the focus on a button, for the biggest text of that window.
 Every match is marked and counted ("3 of 12"), Enter goes to the next, Shift+Enter
 to the previous, Esc closes and clears the marks. Case does not matter, and
 read-only text (a preview) is searched all the same.
+
+**Find in Specs** (Spec menu, Cmd+Shift+F / Ctrl+Shift+F) - the same words in
+TASK.md, ARCHITECTURE.md and every SPEC.md at once: one line per hit -- where,
+which line, the text -- and a double-click opens it with the words marked: a
+spec in the editor (the Target box's rule: an unsaved spec there is not thrown
+away unasked), TASK.md in Edit Goal, ARCHITECTURE.md in the editor. For an old
+name after a rename, a decision that has to be followed everywhere, a gap.
+Headless: `cli.py find ROOT WORDS`.
 
 ## Workflow (maps to the paper)
 
@@ -825,6 +837,13 @@ read-only text (a preview) is searched all the same.
    (the spec's location is independent of where the code lives), e.g.
    `code: ["cli/src/main/java/app/**"]`.
    Ownership is best declared explicitly; the gate catches any file you forgot to list.
+   **Gate** (Validate menu) - Validate and Drift together: the commit gate, as
+   `cli.py gate` and the git hook run it. On a PASS, E clears every change at SOFT
+   or below against the accepted state -- what a run, Codex or an editor outside
+   the cockpit wrote; what you Save in the cockpit is accepted as you save it. The
+   report (in the editor, read-only) shows each change it cleared with its diff;
+   on a BLOCK nothing is cleared, and the report says which changes wait for a
+   pass. HARD changes stay yours, in Requests. No tests, no model.
 8. **Run tests** - runs the project's tests at the node's build root
    (`mvn`/`uv run pytest`/`cargo`/`gradle`/`npm`/`flutter` by manifest). The verdict
    is **recorded as test evidence** (`.sge/evidence.json`) for every node sharing that

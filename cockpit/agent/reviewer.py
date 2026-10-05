@@ -210,6 +210,20 @@ _GOAL_TOOL = {
                            "description": "the gaps from the previous round that the facts now "
                                           "show met, copied verbatim; empty if none were given "
                                           "or none are closed"},
+                "where": {"type": "array",
+                          "description": "for each gap, every place that shows it -- so the "
+                                         "human can open it; empty if there is no gap",
+                          "items": {"type": "object", "required": ["gap", "in", "quote"],
+                                    "properties": {
+                                        "gap": {"type": "integer",
+                                                "description": "which gap, counted from 1"},
+                                        "in": {"type": "string",
+                                               "description": "the id of the node whose spec "
+                                                              "says it, or TASK.md"},
+                                        "quote": {"type": "string",
+                                                  "description": "a few words copied VERBATIM "
+                                                                 "from there, so they can be "
+                                                                 "found"}}}},
             },
         },
     },
@@ -221,6 +235,8 @@ _GOAL_GUIDE = (
     "still missing. The engine has computed the facts below -- the floor (the tests pass "
     "and the gate passes), every node's spec, the pending HARD changes, the tests. Trust "
     "them; do not recompute them.\n"
+    "For every gap, say in `where` where it sits -- the node whose spec shows it, or "
+    "TASK.md -- with a few words copied VERBATIM from there, so the human can open it.\n"
     "Go through TASK.md statement by statement -- what the system must DO, what must "
     "ALWAYS be true, and what it says DONE means (SPEC-GROWTH-ENGINE.md 3.12). A task "
     "states these however it likes: often under headings such as 'What it must do', "
@@ -280,9 +296,28 @@ def check_goal(task: str, facts: str, previous: list[str] = (),
                          role="reviewer")
     if not data:
         return None
-    return {"gaps": _items(data.get("gaps")), "waiting": _items(data.get("waiting")),
-            "closed": _items(data.get("closed")),
+    gaps = _items(data.get("gaps"))
+    return {"gaps": gaps, "waiting": _items(data.get("waiting")),
+            "closed": _items(data.get("closed")), "where": _where(data.get("where"), len(gaps)),
             "summary": str(data.get("summary", "")), "model": model or reviewer_model()}
+
+
+def _where(value, gaps: int) -> list[dict]:
+    """The places H' says each gap sits -- {gap, in, quote}, the gap counted from 1.
+    Whatever is not that shape, or points past the gaps, is dropped: a location is
+    a help for opening the gap, never a reason to fail the check."""
+    out = []
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            gap = int(item.get("gap"))
+        except (TypeError, ValueError):
+            continue
+        where, quote = str(item.get("in") or "").strip(), str(item.get("quote") or "").strip()
+        if 1 <= gap <= gaps and where and quote:
+            out.append({"gap": gap, "in": where, "quote": quote})
+    return out
 
 
 # ---- an unsupervised run: H' answers a decision request in H's place --------------

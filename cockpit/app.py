@@ -63,7 +63,7 @@ from agent import coder, llm, planner, reviewer, semantic
 from engine import (
     accepted, assist, autonomy, capability, changeset, context, drift, graph, inbox,
     index as index_mod, intents, iteration, lifecycle, migration, nodes as nodeops,
-    parser, validate,
+    gate, parser, search as search_mod, validate,
 )
 
 # Specs end at the component: a component nests as deep as it needs to, and the
@@ -205,6 +205,22 @@ class FindBox:
         except tk.TclError:
             pass
         FindBox._open.pop(str(self.text), None)
+
+
+def _mark_line(text: tk.Text, line: int | None, words: str) -> None:
+    """Show `line` of `text` with `words` marked where they stand on it -- the
+    whole line when they wrap past it (a quote YAML broke over two lines)."""
+    text.tag_configure("find_current", background="#ffb347")
+    text.tag_remove("find_current", "1.0", "end")
+    if not line:
+        return
+    start = f"{line}.0"
+    first = " ".join(words.split()[:3])
+    at = text.search(first, start, stopindex=f"{line}.end", nocase=True) if first else ""
+    end = f"{at}+{len(first)}c" if at else f"{line}.end"
+    text.tag_add("find_current", at or start, end)
+    text.mark_set("insert", at or start)
+    text.see(start)
 
 
 def _largest_text(window) -> tk.Text | None:
@@ -534,7 +550,8 @@ class Cockpit(tk.Tk):
                       ("Delete Node", self.delete_node)])
         menu("Arch", [("Edit Arch", self.load_arch), ("Save Arch", self.save_arch)])
         menu("Spec", [("Load Spec", self.load_spec), ("Save Spec", self.save_spec),
-                      ("Compact Spec", self.compact)])
+                      ("Compact Spec", self.compact), None,
+                      ("Find in Specs...", self.find_in_specs)])
         menu("Build", [("Build Context", self.build_ctx), ("Codex", self.run_agent),
                        ("Codex Affected...", self.code_affected),
                        ("Run Tests", self.run_tests_action), None,
@@ -544,6 +561,7 @@ class Cockpit(tk.Tk):
                        ("Show Run Window", self.show_run_window)])
         menu("Validate", [("Requests...", self.show_requests), None,
                           ("Validate", self.run_validate), ("Drift", self.run_drift),
+                          ("Gate", self.run_gate),
                           None, ("Generate Index", self.generate_index),
                           ("Install Git Hook", self.install_git_hook)])
         menu("Registry", [("Find Capability", self.find_capability),
@@ -557,6 +575,10 @@ class Cockpit(tk.Tk):
                          else "<Control-f>")
         self.bind_class("Text", self.find_key, lambda e: FindBox.show(e.widget) and "break")
         self.bind_all(self.find_key, self._find_in_window)
+        # Cmd+Shift+F / Ctrl+Shift+F: the same words in every spec, the goal and the
+        # architecture (Shift turns the key into a capital F)
+        self.bind_all(self.find_key.replace("-f>", "-F>"),
+                      lambda _e: self.find_in_specs() or "break")
 
     def reload_nodes(self) -> None:
         self.nodes = parser.load_nodes(self.root_dir)
@@ -913,6 +935,81 @@ class Cockpit(tk.Tk):
         if deps:
             msg += f"\nWARNING: still referenced by depends_on of: {deps}"
         self._set(self.guidance, msg)
+
+    def find_in_specs(self, query: str = "") -> tk.Toplevel:
+        """Find words in TASK.md, ARCHITECTURE.md and every SPEC.md at once
+        (engine/search.find): one line per hit -- where, which line, the text --
+        and a double-click opens it, the words marked. Deterministic: no model."""
+        win = tk.Toplevel(self)
+        win.title(f"Find in Specs - {self.root_dir}")
+        win.geometry("980x420")
+        top = ttk.Frame(win, padding=6)
+        top.pack(side="top", fill="x")
+        var = tk.StringVar(value=query)
+        entry = ttk.Entry(top, textvariable=var, width=50)
+        entry.pack(side="left")
+        count = ttk.Label(top, padding=(8, 0))
+        tree = ttk.Treeview(win, columns=("where", "line", "text"), show="headings")
+        for col, width in (("where", 200), ("line", 60), ("text", 680)):
+            tree.heading(col, text=col)
+            tree.column(col, width=width, stretch=col == "text")
+        tree.pack(side="top", fill="both", expand=True)
+        hits: dict[str, dict] = {}
+
+        def search(_e=None) -> None:
+            tree.delete(*tree.get_children())
+            hits.clear()
+            self._reload_quiet()
+            found = search_mod.find(self.root_dir, self.nodes, var.get())
+            for hit in found:
+                hits[tree.insert("", "end", values=(hit["where"], hit["line"],
+                                                    hit["text"]))] = hit
+            files = len({h["where"] for h in found})
+            count.config(text=f"{len(found)} hit(s) in {files} file(s)" if var.get().strip()
+                         else "")
+
+        def open_hit(_e=None) -> None:
+            item = tree.focus()
+            if item in hits:
+                self._reveal(hits[item]["where"], hits[item]["line"], var.get())
+
+        ttk.Button(top, text="Find", command=search).pack(side="left", padx=4)
+        count.pack(side="left")
+        ttk.Label(top, text="double-click a line to open it", foreground="#5f5e5a").pack(
+            side="right")
+        entry.bind("<Return>", search)
+        tree.bind("<Double-1>", open_hit)
+        tree.bind("<Return>", open_hit)
+        win._var, win._tree, win._search, win._open = var, tree, search, open_hit
+        entry.focus_set()
+        if query:
+            search()
+        return win
+
+    def _reveal(self, where: str, line: int | None, words: str) -> bool:
+        """Open the place `where` names -- a node's spec in the editor, TASK.md in
+        Edit Goal, ARCHITECTURE.md in the editor -- and show `line`, `words`
+        marked. A spec the editor holds unsaved is not thrown away unasked (the
+        Target box's rule). False when nothing was opened."""
+        if where == search_mod.GOAL:
+            win = self.edit_goal()
+            text = getattr(win, "_editor", None)
+        elif where == search_mod.ARCHITECTURE:
+            self.load_arch()
+            text = self.view
+        elif where in self.nodes:
+            if _spec_id(self._get(self.view)) != where or self._unsaved_spec() != where:
+                self.target.set(where)
+                self._target_picked()
+            if _spec_id(self._get(self.view)) != where:
+                return False                  # the unsaved spec was kept: nothing opened
+            text = self.view
+        else:
+            return False
+        if text is None:
+            return False
+        _mark_line(text, line, words)
+        return True
 
     def _find_in_window(self, event) -> str | None:
         target = _largest_text(event.widget.winfo_toplevel())
@@ -1692,6 +1789,44 @@ class Cockpit(tk.Tk):
         else:
             self._set(self.guidance, "Structure validated (spec-side intent graph).")
 
+    def run_gate(self) -> None:
+        """Validate and Drift together -- the commit gate (engine/gate.py) -- and on
+        a pass E clears every change at SOFT or below. The report shows first which
+        changes were pending, each with its diff, so a person sees what is being
+        cleared; on a block nothing is, and they wait. HARD changes stay H's, in
+        Requests. The same as `cli.py gate`; no tests, no model."""
+        if self._run_busy("The gate"):
+            return
+        unsaved = self._unsaved_spec()
+        if unsaved and not messagebox.askyesno(
+                "Gate", f"The editor holds a spec of {unsaved} that is not saved; the "
+                        "gate's report replaces it. The gate measures what is saved.\n\n"
+                        "Discard the unsaved spec?"):
+            return
+        self._reload_quiet()
+        result = gate.run(self.nodes, self.root_dir)
+        self._reload_quiet()
+        self._update_requests_badge()
+        self._preview(gate.text(result, details=True))
+        if not result["tracked"]:
+            said = ("GATE " + ("BLOCKS" if result["blocked"] else "PASS")
+                    + " -- this project tracks no accepted state, so nothing is cleared.")
+        elif result["blocked"]:
+            said = (f"GATE BLOCKS -- {gate.hard_errors(result)} HARD error(s), listed in the "
+                    "editor. E clears nothing until it passes"
+                    + (f"; {len(result['pending'])} change(s) at SOFT or below wait for that."
+                       if result["pending"] else "."))
+        else:
+            cleared = result["cleared"]
+            said = ("GATE PASS -- " + (
+                f"E cleared {len(cleared)} change(s) at SOFT or below: "
+                + ", ".join(f"{n} ({g})" for n, g in cleared) + "; each is in the editor "
+                "with its diff." if cleared else "nothing was pending at SOFT or below."))
+        if result["waiting"]:
+            said += (f"\n{len(result['waiting'])} HARD change(s) await YOU in Requests: "
+                     + ", ".join(result["waiting"]))
+        self._set(self.guidance, said)
+
     def run_drift(self) -> None:
         self._reload_quiet()  # reflect on-disk truth (coder / external edits)
         try:
@@ -2131,12 +2266,13 @@ class Cockpit(tk.Tk):
                  "in .sge/runs/NN.log.",
     }
 
-    def edit_goal(self) -> None:
+    def edit_goal(self) -> tk.Toplevel | None:
         """TASK.md of this project, in an editor -- with P to propose a fuller goal
         from what is there. Nothing is written until Save: the goal is H's prose
-        (SPEC-GROWTH-ENGINE.md 3.12), and P only proposes it."""
+        (SPEC-GROWTH-ENGINE.md 3.12), and P only proposes it. Returns the window
+        (None during a run), so a place in TASK.md can be shown in it."""
         if self._run_busy("The goal"):
-            return
+            return None
         path = Path(self.root_dir) / "TASK.md"
         text = path.read_text(encoding="utf-8") if path.is_file() else groundwork.task_text(
             groundwork.WriteTask("", "", "", ""))
@@ -2203,6 +2339,7 @@ class Cockpit(tk.Tk):
         ttk.Button(bar, text="Close", command=win.destroy).pack(side="right")
         ttk.Button(bar, text="Save", command=save).pack(side="right", padx=4)
         win._suggest, win._done, win._save, win._editor = suggest, done, save, editor
+        return win
 
     _CHECK_SAID = {
         "done": "The goal is met, as far as E and H' can tell. Nothing to do.",
@@ -2280,7 +2417,26 @@ class Cockpit(tk.Tk):
             self._set(self.guidance, f"The check could not finish: {error}")
             return
         self._set(self.guidance, orchestrate.check_text(result) + "\n\n"
-                  + self._CHECK_SAID.get(result["verdict"], ""))
+                  + self._CHECK_SAID.get(result["verdict"], "")
+                  + ("\nClick an `in` line to open that place, the words marked."
+                     if result.get("where") else ""))
+        self._link_locations(result.get("where") or [])
+
+    def _link_locations(self, where: list[dict]) -> None:
+        """Make each `in` line of a check in Guidance open its place on a click."""
+        g = self.guidance
+        g.tag_configure("location", foreground="#1a5fb4", underline=True)
+        g.tag_bind("location", "<Enter>", lambda _e: g.configure(cursor="hand2"))
+        g.tag_bind("location", "<Leave>", lambda _e: g.configure(cursor=""))
+        for n, loc in enumerate(where):
+            start = g.search(orchestrate.location_line(loc).strip(), "1.0", stopindex="end")
+            if not start:
+                continue
+            tag = f"location{n}"
+            g.tag_add("location", start, f"{start} lineend")
+            g.tag_add(tag, start, f"{start} lineend")
+            g.tag_bind(tag, "<Button-1>", lambda _e, at=loc: self._reveal(
+                at["in"], at.get("line"), at["quote"]) and None)
 
     def start_run(self) -> None:
         """Hand the AUTHORSHIP of intent to an agent, for this project, now.

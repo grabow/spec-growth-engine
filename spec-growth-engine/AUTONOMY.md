@@ -267,7 +267,9 @@ verdict:
 
 ```text
   red        the tests or the gate fail -- H' is not asked about a red floor
-  gaps       green, and H' names what TASK.md asks for and the graph lacks
+  gaps       green, and H' names what TASK.md asks for and the graph lacks --
+             each with where it sits: a few words quoted from the spec or
+             TASK.md that shows it, found to the line (engine/search.locate)
   asking     green, no gap, and something waits for H -- ANY of it: a pending
              HARD change or a waiver too, not only the decision requests a run
              stops on, because `done` here is to mean nothing waits for you

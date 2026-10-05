@@ -54,6 +54,12 @@ uv run pytest -q             # the test count lives here, not in this file
 engine/            deterministic, authors no intent
   parser.py        load SPEC.md + ARCHITECTURE.md; skip (and report) invalid YAML,
                    a SPEC.md with no id and a duplicate id -- none vanishes in silence
+  gate.py          the commit gate: validate + drift; on a pass E clears what is at
+                   SOFT or below -- one place for `cli.py gate`, the hook and the
+                   cockpit's Validate > Gate (which also shows each pending change)
+  search.py        find words in TASK.md, ARCHITECTURE.md and every SPEC.md (find), and
+                   where a quote starts, across YAML line wraps (locate) -- for
+                   Find in Specs and for opening a gap H' names
   graph.py         ownership tree (parent) + dependency DAG (depends_on) + Spine + cycles
   context.py       Context(N): ARCHITECTURE + ancestor contracts (SHORT) + target (FULL)
                    + own code + dependency contracts
@@ -142,7 +148,8 @@ runlog.py          one readable line per event of a run's stream -- rendered onc
                    for the cockpit's Run window and the run's log (.sge/runs/NN.log)
 cli.py             headless gate: validate | drift | gate | init (lay a floor; --like OLD) |
                    manuals (render them again) | run (an agent, in rounds) |
-                   check (E + H' against TASK.md, no agent) | compact (P: the same spec
+                   check (E + H' against TASK.md, no agent) | find (words in every spec,
+                   the goal and the architecture) | compact (P: the same spec
                    in fewer words; refused if a provides name would go) | rename (a node and its
                    subtree; every field naming it follows, the code stays) |
                    pending (H's inbox: waivers, decisions, HARD changes, delegated) | prepare |
@@ -162,16 +169,20 @@ GUI menus   Open     Open · New Project... (lays the floor) · New Project Like
             Node     Show Tree · New Node · Rename Node... (the plan first; the
                      subtree and every edge follow, the code stays) · Delete Node
             Arch     Edit Arch · Save Arch
-            Spec     Load Spec · Save Spec · Compact Spec
+            Spec     Load Spec · Save Spec · Compact Spec · Find in Specs...
             Build    Build Context (a read-only preview) · Codex (builds the context
                      itself, from the saved specs) · Codex Affected... (the node and
                      whoever uses it, in order, then the tests and the gate) ·
                      Run Tests · Edit Goal (TASK.md)... ·
                      Check Goal (TASK.md) (E + H', no agent) · Start Run... (an agent
                      writes the intent, in rounds) · Show Run Window
-            Validate Requests... · Validate · Drift · Generate Index · Install Git Hook
+            Validate Requests... · Validate · Drift · Gate (both; on a pass E clears
+                     SOFT, each shown with its diff) · Generate Index · Install Git Hook
             Registry Find Capability · Duplicates · Claim Capability
-GUI extras  Cmd+F (macOS) / Ctrl+F in every text -- the editor, Guidance, Edit Goal,
+GUI extras  Find in Specs (Cmd+Shift+F): words in every spec, the goal and the
+            architecture, a double-click opens the hit marked; Check Goal's gaps
+            say where they sit, a click opens the place
+            Cmd+F (macOS) / Ctrl+F in every text -- the editor, Guidance, Edit Goal,
             a run's window: every match marked and counted, Enter / Shift+Enter
             step through, Esc closes (FindBox)
             Requests (n): H's inbox -- grant/reject waivers, accept/resolve/reject
