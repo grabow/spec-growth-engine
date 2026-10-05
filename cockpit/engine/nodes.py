@@ -223,11 +223,12 @@ def rename_node(root: str | Path, node_id: str, segment: str,
     "mentions": files whose PROSE still names an old id -- not rewritten, for
     the human to read: a sentence is not a reference the engine can be sure of.
 
-    What follows is the gate's, as for any change: the old ids leave the graph
-    and the new ones arrive, SOFT -- HARD where another node depended on one.
-    The growth record (intents.jsonl) is kept by id, so each renamed node gets
-    a `renamed` entry naming its old id: its history does not end at the rename."""
-    from . import intents, lifecycle
+    A rename moves no promise, so what is kept per id follows it: the accepted
+    state (the rename is no change set of its own, and what was pending stays
+    pending) and the test evidence (the tests ran on the same code). The growth
+    record is history, so each renamed node gets a `renamed` entry naming its old
+    id instead: its history does not end at the rename."""
+    from . import accepted, intents, lifecycle
     plan = rename_plan(root, node_id, segment, nodes)
     root = Path(root).resolve()
     ids = plan["ids"]
@@ -249,6 +250,8 @@ def rename_node(root: str | Path, node_id: str, segment: str,
             if directory.exists():
                 break
             directory = directory.parent
+    accepted.rename(root, ids)
+    lifecycle.rename_evidence(root, ids)
     for old, new in ids.items():
         intents.record(root, new, "renamed", f"renamed from {old}", by=by, gate=None)
         lifecycle.log_autonomy(root, {"actor": intents.author(), "by": by,
@@ -265,8 +268,8 @@ def rename_text(result: dict) -> str:
               for path in result.get("mentions") or []]
     lines += ["code      untouched: the globs still name the same files. To rename the "
               "code too, Revise the globs and let Codex move it.",
-              "next      run the tests (evidence is kept per id), then the gate -- a "
-              "renamed node others depended on is a HARD change for H to accept"]
+              "accepted  the accepted state and the test evidence followed the new ids: "
+              "a rename moves no promise, so it is no change set of its own"]
     return "\n".join(lines)
 
 

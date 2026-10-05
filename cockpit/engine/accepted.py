@@ -209,6 +209,26 @@ def summary(nodes: dict[str, dict], root: str | Path) -> str:
 
 # ---- writing -----------------------------------------------------------------
 
+def rename(root: str | Path, ids: dict[str, str]) -> None:
+    """A rename moves no promise (nodes.rename_node): each renamed node's accepted
+    record moves to its new id, and every accepted spec that names a renamed id
+    names the new one. So the rename is no change set of its own, and whatever was
+    pending before it stays pending -- under the new name."""
+    state = load(root)
+    if state is None:
+        return
+    from . import nodes as nodeops   # nodes -> accepted at call time: no import cycle
+    moved = {}
+    for nid, rec in state["nodes"].items():
+        spec = dict(rec.get("spec") or {})
+        spec.update(nodeops._renamed(spec, ids))
+        moved[ids.get(nid, nid)] = {**rec, "spec": spec}
+    state["nodes"] = moved
+    if state.get("rejected"):
+        state["rejected"] = {ids.get(k, k): v for k, v in state["rejected"].items()}
+    _write(root, state)
+
+
 def _write(root: str | Path, state: dict) -> None:
     path = _path(root)
     path.parent.mkdir(parents=True, exist_ok=True)

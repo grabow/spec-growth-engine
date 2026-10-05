@@ -45,6 +45,17 @@ def load_evidence(project_root: str | Path) -> dict[str, dict]:
     return nodes if isinstance(nodes, dict) else {}
 
 
+def rename_evidence(project_root: str | Path, ids: dict[str, str]) -> None:
+    """Test evidence follows a renamed node: the tests ran on the same code, and a
+    rename changes none of it (nodes.rename_node)."""
+    path = _store_path(project_root)
+    if not path.is_file():
+        return
+    store = {"version": 1, "nodes": {ids.get(nid, nid): rec
+                                      for nid, rec in load_evidence(project_root).items()}}
+    path.write_text(json.dumps(store, indent=2) + "\n", encoding="utf-8")
+
+
 def record_evidence(
     project_root: str | Path,
     node_ids: list[str],

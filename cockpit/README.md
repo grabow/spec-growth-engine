@@ -662,9 +662,11 @@ deleted from the cockpit:
   globs keep naming the same files -- to rename the code as well, Revise the
   globs and let Codex move it. Prose that still names an old id (a spec's text,
   ARCHITECTURE.md, TASK.md) is listed, not rewritten. The growth record gets a
-  `renamed` entry, so a node's history does not end at its old name. After it:
-  Run Tests (evidence is kept per id), then Validate -- a renamed node others
-  depended on is a HARD change you accept. Headless: `cli.py rename ROOT ID NEW`.
+  `renamed` entry, so a node's history does not end at its old name. A rename
+  moves no promise, so what is kept per id follows it: the accepted state (the
+  rename is no change set of its own; what was pending stays pending, under the
+  new name) and the test evidence (the tests ran on the same code). Headless:
+  `cli.py rename ROOT ID NEW`.
 - **Delete node** - removes the node's SPEC.md (and its now-empty directory) and
   drops it from the parent's `children`. A node with children is refused unless
   you confirm a **recursive** delete (subtree, post-order). Any nodes that still
@@ -737,7 +739,8 @@ read-only text (a preview) is searched all the same.
    Guidance above the change set and kept in the growth record when you save --
    not in the spec: the prose describes the node as it is now.
 
-   **Compact** (beside Revise; Spec > Compact Spec) - the target's SAVED spec in
+   **Compact** (under the editor, beside Save; Spec > Compact Spec) - the
+   target's SAVED spec in
    fewer words. Every promise stays; what is said twice, what ARCHITECTURE.md and
    the ancestors already say, verification lines that copy the criteria, notes
    about one machine and revision history in the prose go. Like Revise it lands
@@ -754,7 +757,8 @@ read-only text (a preview) is searched all the same.
    ancestors say reaches the node anyway and is not repeated. The prose below
    the frontmatter: what the node is for and why it is shaped this way, in a few
    sentences. P is told all of this for every draft, revise and compaction.
-3. **Save** - write the reviewed spec, reindex. The frontmatter is
+3. **Save** (under the editor; the bar there says which node it writes to) -
+   write the reviewed spec, reindex. The frontmatter is
    auto-repaired for the one recurring YAML breakage (an unquoted `word: word`
    colon or leading backtick in a scalar): the offending line is quoted, reported in
    Guidance (transparent, never silent). The SAME healing runs **on load/reload**

@@ -147,3 +147,27 @@ def test_cli_rename(graph_root, capsys):
     out = capsys.readouterr().out
     assert "renamed   util -> tools" in out and "moved     util/SPEC.md -> tools/SPEC.md" in out
     assert cli.main(["rename", str(graph_root), "tools", "a.b"]) == 2
+
+
+def test_a_rename_is_no_change_set_and_keeps_the_evidence(graph_root):
+    """A rename moves no promise: the accepted state and the test evidence follow
+    the new id -- otherwise the renamed node read as NEW against the accepted
+    state, and a compaction right after it showed no diff at all."""
+    from engine import accepted, lifecycle
+    accepted.accept_all(parser.load_nodes(graph_root), graph_root, by="setup")
+    lifecycle.record_evidence(graph_root, ["util"], "pass", "pytest")
+    nodes.rename_node(graph_root, "util", "tools", parser.load_nodes(graph_root))
+    assert accepted.changes(parser.load_nodes(graph_root), graph_root) == []
+    evidence = lifecycle.load_evidence(graph_root)
+    assert "tools" in evidence and "util" not in evidence
+
+
+def test_what_was_pending_stays_pending_under_the_new_name(graph_root):
+    from engine import accepted
+    accepted.accept_all(parser.load_nodes(graph_root), graph_root, by="setup")
+    spec = graph_root / "util" / "SPEC.md"
+    spec.write_text(spec.read_text(encoding="utf-8").replace("log()", "log(level)"),
+                    encoding="utf-8")                       # breaking, consumed: HARD
+    nodes.rename_node(graph_root, "util", "tools", parser.load_nodes(graph_root))
+    [change] = accepted.pending(parser.load_nodes(graph_root), graph_root)
+    assert change["node"] == "tools" and change["diff"]["provides"]["removed"] == ["log()"]

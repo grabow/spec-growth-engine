@@ -569,6 +569,13 @@ def picking_a_target_loads_its_spec():
     c.target.event_generate("<<ComboboxSelected>>")
     _settle(c)
     _check(c.view.get("1.0", "end").strip() == gui.strip(), "svc.gui's spec was not loaded")
+    # Save and Compact act on the editor, so they sit under it -- and say where Save writes
+    editor_pane = c.view.master.master
+    for button in (c.save_button, c.compact_button):
+        _check(button.master.master is editor_pane, f"{button.cget('text')} is not under "
+                                                    "the editor")
+    _check(button.master.pack_info()["side"] == "bottom", "the editor's bar is not below it")
+    _check(c.target_var.get() == "svc.gui", "the bar does not show the target")
 
     # the view is as on disk: nothing to lose, no question
     asked = []

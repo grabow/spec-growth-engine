@@ -406,7 +406,10 @@ class Cockpit(tk.Tk):
         row = ttk.Frame(top)
         row.pack(fill="x")
         ttk.Label(row, text="Target node:").pack(side="left")
-        self.target = ttk.Combobox(row, values=sorted(self.nodes), state="readonly")
+        # one variable: the editor's button bar shows it too, so Save says where it writes
+        self.target_var = tk.StringVar()
+        self.target = ttk.Combobox(row, values=sorted(self.nodes), state="readonly",
+                                   textvariable=self.target_var)
         self.target.pack(side="left", fill="x", expand=True, padx=4)
         # picking a node shows its SPEC.md, as a double-click in the graph does
         self.target.bind("<<ComboboxSelected>>", lambda _e: self._target_picked())
@@ -430,16 +433,12 @@ class Cockpit(tk.Tk):
         btns.pack(anchor="e", pady=4)
         # Both emit a spec into the View on the right; long arrow = Draft (from
         # scratch), short arrow = Revise (edits the existing spec in place, status kept).
+        # They work from the Intent box, so they sit under it; Compact and Save work
+        # on what the editor holds, so they sit under the editor.
         self.draft_button = ttk.Button(btns, text="Draft ⟶", command=self.draft)
         self.draft_button.pack(side="left", padx=3)
         self.revise_button = ttk.Button(btns, text="Revise →", command=self.revise)
         self.revise_button.pack(side="left", padx=3)
-        # the same spec in fewer words -- a draft too, Save decides
-        self.compact_button = ttk.Button(btns, text="Compact", command=self.compact)
-        self.compact_button.pack(side="left", padx=3)
-        # what Draft and Revise put into the editor is not saved until this is pressed
-        self.save_button = ttk.Button(btns, text="Save", command=self.save_spec)
-        self.save_button.pack(side="left", padx=(12, 3))
 
         # --- guidance pane (small: little text lives here) ---
         gf = ttk.Frame(left)
@@ -492,6 +491,17 @@ class Cockpit(tk.Tk):
         vf = ttk.Frame(main)
         main.add(vf, weight=2)
         ttk.Label(vf, text="View / Editor  (SPEC.md draft / context / drift)").pack(anchor="w")
+        # under the editor: what acts on what it holds -- and where Save writes
+        vbar = ttk.Frame(vf)
+        vbar.pack(side="bottom", fill="x", pady=4)
+        ttk.Label(vbar, text="writes to:").pack(side="left", padx=(2, 4))
+        ttk.Label(vbar, textvariable=self.target_var, font=MONO).pack(side="left")
+        # what Draft, Revise and Compact put into the editor is not saved until this
+        self.save_button = ttk.Button(vbar, text="Save", command=self.save_spec)
+        self.save_button.pack(side="right", padx=3)
+        # the same spec in fewer words -- a draft too, Save decides
+        self.compact_button = ttk.Button(vbar, text="Compact", command=self.compact)
+        self.compact_button.pack(side="right", padx=3)
         self.view = ScrolledText(vf, font=MONO, wrap="none")
         self.view.pack(fill="both", expand=True)
 

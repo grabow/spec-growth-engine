@@ -179,8 +179,9 @@ GUI extras  Cmd+F (macOS) / Ctrl+F in every text -- the editor, Guidance, Edit G
             nodes awaiting H are amber in the graph
             Target box: picking a node loads its SPEC.md (asks before an unsaved
             spec in the editor goes) ·
-            Draft ⟶ / Revise → / Compact (the same spec in fewer words, a draft;
-            warns when a provides name went missing) · P's note on a revise, shown
+            Draft ⟶ / Revise → under the Intent box; Compact (the same spec in
+            fewer words, a draft; warns when a provides name went missing) and
+            Save under the editor, with the node Save writes to · P's note on a revise, shown
             and kept in the growth record, never written into the spec ·
             autonomy slider (D0..D2, the draft gate) ·
             the delegation switch beside it (per project, on | off) · node graph window
