@@ -380,6 +380,7 @@ who the change reaches (5a)                 engine.changeset.impact
 HARD change on manual Save -> confirm       app.Cockpit.save_spec
 headless: changes vs. the accepted state    engine.accepted.changes
 E accepts <= SOFT on a passing gate         engine.accepted.clear
+the gate, one place: validate+drift, then E engine.gate.run
 H accepts a HARD change                     engine.accepted.accept
 a pending HARD change holds `verified`      engine.accepted.issues
 H rejects: the gate blocks, with the reason engine.accepted.reject
@@ -463,7 +464,10 @@ line, drawn by E instead of H'.
 
 Measured against     .sge/accepted.json -- each node's spec as last accepted,
                      and ARCHITECTURE.md (glossary §3.9b)
-E                    on a PASSING gate, accepts every change at SOFT or below
+E                    on a PASSING gate, accepts every change at SOFT or below --
+                     `cli.py gate`, the git hook, the cockpit's Validate > Gate
+                     (its report shows each change it cleared, with its diff),
+                     and inside a goal check and every round of a run
 H                    accepts HARD: `cli.py accept ROOT ID`, or Save in the cockpit
                      (which measures against the same state, so a HARD change an
                      agent left pending is part of what H is asked about)

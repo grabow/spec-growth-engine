@@ -312,7 +312,11 @@ The last state of each node's spec -- and of ARCHITECTURE.md -- that someone wit
 the authority accepted. A change is measured against it when there is no Save to
 measure against (an agent writing files). -> engine/accepted.py, .sge/accepted.json
 
-  accepted by   E on a passing gate: every change at SOFT or below
+  accepted by   E on a passing gate: every change at SOFT or below -- the gate
+                  (engine/gate.py) runs as `cli.py gate`, the git hook, the
+                  cockpit's Validate > Gate, and inside a goal check and every
+                  round of a run; the cockpit's report shows each change it
+                  cleared, with its diff
                 H' at D2: the SOFT drafts it cleared
                 H' (delegation on): a pending HARD change inside the scope H delegated,
                   migrated -- waits for H to confirm or overrule

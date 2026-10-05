@@ -159,7 +159,8 @@ Implemented today: all three -- D0-D2, the delegation, and the run as an operati
 mode (an orchestrated run, where the intent author I is an agent; AUTONOMY.md §3).
 D0-D2 (draft SOFT gate; D2 clears only what the change set,
 engine/changeset.py, classifies as SOFT or below). Headless, the gate measures
-changes against an accepted state: E accepts SOFT on a pass, HARD stays pending
+changes against an accepted state: E accepts SOFT on a pass (`cli.py gate`, the
+hook, the cockpit's Validate > Gate -- one engine/gate.py), HARD stays pending
 for H (engine/accepted.py), prepared by H' and decided by H (engine/assist.py,
 AUTONOMY 5c). The delegation is built: where H switches it on for a project, H'
 may accept a breaking change to a consumed component contract once E finds it

@@ -86,7 +86,8 @@ Without the cockpit:
 ```sh
 uv run python cli.py init ~/work/notes --id notes --container app \
     --does "notes add TEXT prints the id" --always "notes survive a restart"
-uv run python cli.py gate ~/work/notes          # the commit gate: validate + drift
+uv run python cli.py gate ~/work/notes          # the commit gate: validate + drift;
+                                                # on a pass E accepts what is SOFT
 uv run python cli.py install-hook ~/work/notes  # in a git repo: the gate on every commit
 uv run python cli.py run ~/work/notes           # an agent grows it, in rounds
 uv run python cli.py check ~/work/notes         # does it meet TASK.md? (H', no agent)

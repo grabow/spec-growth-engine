@@ -344,7 +344,8 @@ state** (`accept ROOT --all` records the current graph in `.sge/accepted.json`),
 the gate measures every node against it:
 
 ```text
-change at SOFT or below    accepted by E on a passing gate (logged, actor E)
+change at SOFT or below    accepted by E on a passing gate (logged, actor E) --
+                           Validate > Gate in the cockpit shows each with its diff
 HARD change                PENDING: the gate still passes, but the node -- and
                            the consumers of a broken contract -- cannot be
                            `verified` until H runs `accept ROOT ID`
