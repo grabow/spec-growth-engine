@@ -31,11 +31,15 @@ def author() -> str:
 
 
 def record(root: str | Path, node: str, action: str, text: str, *,
-           by: str, gate: str | None) -> None:
+           by: str, gate: str | None, note: str = "") -> None:
+    """One growth step. `note` is P's word on what the step changed and why -- kept
+    here, beside the intent, because the spec's prose describes the node as it is
+    now, not how it got there."""
     path = Path(root) / _FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     entry = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "node": node, "action": action,
-             "author": author(), "by": by, "intent": text, "gate": gate}
+             "author": author(), "by": by, "intent": text, "gate": gate,
+             **({"note": note} if note else {})}
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 

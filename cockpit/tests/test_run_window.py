@@ -29,7 +29,8 @@ TK_UNAVAILABLE = 77
                                       "check_goal_says_the_verdict",
                                       "rename_node_shows_the_plan_first",
                                       "code_affected_codes_in_order_and_locks",
-                                      "find_in_any_text"])
+                                      "find_in_any_text",
+                                      "compact_shows_a_draft_and_a_lost_promise"])
 def test_run_window(scenario):
     env = dict(os.environ, PYTHONPATH=str(COCKPIT))
     try:

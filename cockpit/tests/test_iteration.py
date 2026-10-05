@@ -686,15 +686,28 @@ def test_the_digest_shows_what_c_is_doing():
 
 # ---- the goal check: a run's last word, without the run --------------------------
 
-def _check(root, floor_result, goal_result=None):
+def _check(root, floor_result, goal_result=None, steps=None):
     asked = []
 
     def goal(r, task, fl, previous=()):
         asked.append(task)
         return goal_result
     result = orchestrate.check(str(root), "# Task", check_floor=lambda r: floor_result,
-                               check_goal=goal)
+                               check_goal=goal,
+                               progress=steps.append if steps is not None else None)
     return result, asked
+
+
+def test_the_check_says_each_step_as_it_starts(graph_root):
+    """It takes a while -- H' is a model call -- so it says what it is doing; on a
+    red floor H' is not asked, and the second step is not announced."""
+    steps = []
+    _check(graph_root, _RED, steps=steps)
+    assert steps == [orchestrate.CHECK_STEPS[0]]
+    steps.clear()
+    _check(graph_root, _GREEN, {"gaps": [], "waiting": [], "closed": [], "model": "m"},
+           steps=steps)
+    assert steps == list(orchestrate.CHECK_STEPS)
 
 
 def test_the_check_on_a_red_floor_does_not_ask_h_prime(graph_root):
@@ -739,9 +752,14 @@ def test_cli_check_says_done_with_0_and_needs_a_goal(tmp_path, monkeypatch, caps
     assert cli.main(["check", str(tmp_path)]) == 2                  # no TASK.md
     (tmp_path / "TASK.md").write_text("# Task", encoding="utf-8")
     verdicts = iter(["done", "gaps"])
-    monkeypatch.setattr(orchestrate, "check", lambda root, task: {
-        "verdict": next(verdicts), "why": "w", "failures": [], "gaps": [], "waiting": [],
-        "closed": [], "summary": "", "requests": [], "model": ""})
+    def check(root, task, progress=None):
+        for step in orchestrate.CHECK_STEPS:
+            progress(step)
+        return {"verdict": next(verdicts), "why": "w", "failures": [], "gaps": [],
+                "waiting": [], "closed": [], "summary": "", "requests": [], "model": ""}
+    monkeypatch.setattr(orchestrate, "check", check)
     assert cli.main(["check", str(tmp_path)]) == 0
     assert cli.main(["check", str(tmp_path)]) == 1
-    assert "CHECK     GAPS -- w" in capsys.readouterr().out
+    said = capsys.readouterr()
+    assert "CHECK     GAPS -- w" in said.out
+    assert "[2/2] H' reads TASK.md against the result ..." in said.err   # it said so

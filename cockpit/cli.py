@@ -28,6 +28,8 @@ git pre-commit hook can refuse a commit that drifts spec from code.
                                             # invariants, and record it as accepted
   uv run python cli.py init     ROOT --like OLD   # the same floor again, elsewhere
   uv run python cli.py manuals  ROOT        # re-render AGENTS.md / ORCHESTRATOR.md
+  uv run python cli.py compact  ROOT ID [--force]   # P: the same spec in fewer words;
+                                            # refused if a provides name would go
   uv run python cli.py rename   ROOT ID NEW [--by NAME]   # rename a node and its subtree;
                                             # its code stays where it is
   uv run python cli.py check    ROOT [--task FILE]   # does it meet TASK.md? E measures,
@@ -309,7 +311,7 @@ def _h_prime():
 
 
 def _write_spec(root: str, nodes: dict, nid: str, text: str, path: Path, *,
-                actor: str, by: str, action: str, intent: str) -> int:
+                actor: str, by: str, action: str, intent: str, note: str = "") -> int:
     """Write what P produced, the way the cockpit's Save does: repair the YAML,
     show the change set against the accepted state, log who wrote it -- and
     record the intent it was grown from (engine/intents.py)."""
@@ -326,8 +328,10 @@ def _write_spec(root: str, nodes: dict, nid: str, text: str, path: Path, *,
     gate = assessed[0]["gate"] if assessed else None
     lifecycle.log_autonomy(root, {"actor": actor, "by": by, "action": action, "node": nid,
                                   "gate": gate})
-    intents.record(root, nid, action, intent, by=by, gate=gate)
+    intents.record(root, nid, action, intent, by=by, gate=gate, note=note)
     print(f"{action} {nid} -> {path}  (by {actor}: {by})")
+    if note:
+        print(f"P's note: {note}")
     print(changeset.report(*assessed) if assessed
           else "the result does not parse as a SPEC.md -- validate will say why")
     return 0
@@ -386,15 +390,46 @@ def cmd_revise(root: str, nid: str, change: str) -> int:
     # existing node is where additive-or-breaking is decided
     spine = {a: nodes[a].get("contract") for a in graph.spine(nodes, nid)[:-1]}
     try:
-        text = planner.revise_spec(path.read_text(encoding="utf-8"), change,
-                                   architecture=parser.load_architecture(root),
-                                   spine=spine, consumers=nodeops.dependents_of(nodes, nid),
-                                   targets=_targets(nodes))
+        text, note = planner.revise_spec(path.read_text(encoding="utf-8"), change,
+                                         architecture=parser.load_architecture(root),
+                                         spine=spine,
+                                         consumers=nodeops.dependents_of(nodes, nid),
+                                         targets=_targets(nodes), with_note=True)
     except RuntimeError as exc:
         print(f"P unavailable: {exc}", file=sys.stderr)
         return 2
     return _write_spec(root, nodes, nid, text, path, actor="P", by=llm.planner_model(),
-                       action="revised", intent=change)
+                       action="revised", intent=change, note=note)
+
+
+def cmd_compact(root: str, nid: str, force: bool = False) -> int:
+    """P says the same spec in fewer words (planner.compact_spec) and it is written
+    like a revise -- unless a `provides` name went missing on the way: then nothing
+    is written and the lost names are said (--force writes all the same)."""
+    nodes = _load(root)
+    if nid not in nodes:
+        print(f"error: no node {nid!r}", file=sys.stderr)
+        return 2
+    _load_env()
+    from agent import llm, planner
+    from engine import graph
+    path = Path(nodes[nid]["_path"])
+    current = path.read_text(encoding="utf-8")
+    spine = {a: nodes[a].get("contract") for a in graph.spine(nodes, nid)[:-1]}
+    try:
+        text, note = planner.compact_spec(current, parser.load_architecture(root),
+                                          spine=spine)
+    except RuntimeError as exc:
+        print(f"P unavailable: {exc}", file=sys.stderr)
+        return 2
+    lost = planner.lost_promises(current, text)
+    if lost and not force:
+        print(f"not written: compacting dropped {', '.join(lost)} from provides -- every "
+              "promise must survive (--force writes it all the same)", file=sys.stderr)
+        return 2
+    print(f"{len(current.splitlines())} -> {len(text.splitlines())} lines")
+    return _write_spec(root, nodes, nid, text, path, actor="P", by=llm.planner_model(),
+                       action="compacted", intent="the same spec in fewer words", note=note)
 
 
 def cmd_intents(root: str, nid: str | None) -> int:
@@ -598,7 +633,15 @@ def cmd_check(root: str, task: str | None) -> int:
         print(f"no goal to check against: {path} does not exist", file=sys.stderr)
         return 2
     _load_env()     # H' is configured in cockpit/.env
-    result = orchestrate.check(str(Path(root).resolve()), path.read_text(encoding="utf-8"))
+    import time
+    start = time.monotonic()
+
+    def progress(step: str) -> None:            # it takes a while; say what it is doing
+        n = orchestrate.CHECK_STEPS.index(step) + 1
+        print(f"[{n}/{len(orchestrate.CHECK_STEPS)}] {step} ...  "
+              f"({time.monotonic() - start:.0f}s)", file=sys.stderr, flush=True)
+    result = orchestrate.check(str(Path(root).resolve()), path.read_text(encoding="utf-8"),
+                               progress=progress)
     print(orchestrate.check_text(result))
     return 0 if result["verdict"] == "done" else 1
 
@@ -750,6 +793,11 @@ def main(argv: list[str] | None = None) -> int:
                     help="out of scope: what nobody should grow; repeatable")
     sp = sub.add_parser("manuals")
     sp.add_argument("root")
+    sp = sub.add_parser("compact")
+    sp.add_argument("root")
+    sp.add_argument("id")
+    sp.add_argument("--force", action="store_true",
+                    help="write even if a provides name went missing")
     sp = sub.add_parser("rename")
     sp.add_argument("root")
     sp.add_argument("id", help="the node to rename")
@@ -829,6 +877,8 @@ def main(argv: list[str] | None = None) -> int:
                         args.always, args.out_of_scope, like=args.like)
     if args.cmd == "manuals":
         return cmd_manuals(args.root)
+    if args.cmd == "compact":
+        return cmd_compact(args.root, args.id, args.force)
     if args.cmd == "rename":
         return cmd_rename(args.root, args.id, args.new, args.by)
     if args.cmd == "check":

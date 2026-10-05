@@ -138,7 +138,12 @@ def goal(root: str, task: str, fl: dict, previous: list[str] = ()) -> dict:
     return result
 
 
-def check(root: str, task: str, *, check_floor=floor, check_goal=goal) -> dict:
+CHECK_STEPS = ("E runs the tests -- the whole build -- and the gate",
+               "H' reads TASK.md against the result")
+
+
+def check(root: str, task: str, *, check_floor=floor, check_goal=goal,
+          progress=None) -> dict:
     """The goal check WITHOUT an agent: what a run's last round says about the
     project as it stands -- E measures, and on a green floor H' checks it against
     TASK.md -- with no intent author to spend a session or touch a file. Nothing
@@ -148,8 +153,12 @@ def check(root: str, task: str, *, check_floor=floor, check_goal=goal) -> dict:
     {"verdict": red | gaps | asking | done | unchecked, "why", "failures", "gaps",
      "waiting", "closed", "summary", "requests", "model"}. `requests` is every
     thing waiting for H -- a pending HARD change and a waiver too, not only the
-    decision requests a run stops on: `done` is to mean nothing waits for you."""
+    decision requests a run stops on: `done` is to mean nothing waits for you.
+    `progress(step)` hears each of CHECK_STEPS as it starts: the check takes
+    a while -- H' is a model call -- and must not look like it hung."""
     from engine import inbox
+    say = progress or (lambda _step: None)
+    say(CHECK_STEPS[0])
     fl = check_floor(root)
     waits = [f"{it['type']:8} {it['node']} -> {it['subject']}"
              for it in inbox.pending(parser.load_nodes(root), root)]
@@ -158,6 +167,7 @@ def check(root: str, task: str, *, check_floor=floor, check_goal=goal) -> dict:
     if not fl["green"]:
         return {**out, "verdict": "red", "failures": iteration.failures(fl),
                 "why": "the tests or the gate fail -- H' is not asked about a red floor"}
+    say(CHECK_STEPS[1])
     gl = check_goal(root, task, fl)
     if "unavailable" in gl:
         return {**out, "verdict": "unchecked",

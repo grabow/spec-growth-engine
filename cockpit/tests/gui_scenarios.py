@@ -672,8 +672,13 @@ def check_goal_says_the_verdict():
     (c.proj / "TASK.md").write_text("# Task\n", encoding="utf-8")
     seen = []
 
-    def check(root, task):
+    shown = []
+
+    def check(root, task, progress=None):
         seen.append(task)
+        for step in app.orchestrate.CHECK_STEPS:            # what the real one says
+            progress(step)
+            shown.append(c.guidance.get("1.0", "end"))
         return {"verdict": "gaps", "why": "H' names 1 gap(s) against TASK.md",
                 "failures": [], "gaps": ["no test for the tkinter window"], "waiting": [],
                 "closed": [], "summary": "", "requests": [], "model": "m"}
@@ -682,6 +687,10 @@ def check_goal_says_the_verdict():
     c.check_goal()
     said = c.guidance.get("1.0", "end")
     _check(seen == ["# Task\n"], f"checked against {seen}")
+    _check("[1/2] E runs the tests" in shown[0] and "working" in shown[0], shown[0])
+    _check("[1/2] E runs the tests -- the whole build -- and the gate   done" in shown[1]
+           and "[2/2] H' reads TASK.md" in shown[1] and "minute or two" in shown[1],
+           shown[1])
     _check("CHECK     GAPS" in said and "gap       no test for the tkinter window" in said,
            said)
     _check("Start Run" in said, "the verdict did not say what to do next")
@@ -794,6 +803,41 @@ def find_in_any_text():
     _check(box.count.cget("text") == "1 of 1", box.count.cget("text"))
 
 
+def compact_shows_a_draft_and_a_lost_promise():
+    """Compact puts the shorter spec in the editor, unsaved, and says loudly when a
+    provides name went missing; Revise shows P's note on its change."""
+    import app
+    c = _cockpit()
+    gui = c.proj / "gui" / "SPEC.md"
+    gui.write_text(gui.read_text().replace("contract: {purpose: y}",
+                                           "contract: {purpose: y, provides: [choose(), show()]}"),
+                   encoding="utf-8")
+    c.reload_nodes()
+    saved = gui.read_text()
+    c.target.set("svc.gui")
+    app.planner.compact_spec = lambda cur, arch="", **kw: (
+        cur.replace("choose(), show()", "choose()"), "merged show into choose")
+    c.compact()
+    said = c.guidance.get("1.0", "end")
+    _check("WARNING -- compacting dropped from provides: show" in said, said)
+    _check("P's note: merged show into choose" in said, said)
+    _check("show()" not in c.view.get("1.0", "end"), "the draft is not in the editor")
+    _check(gui.read_text() == saved, "Compact saved by itself")
+
+    c.load_spec()
+    app.planner.compact_spec = lambda cur, arch="", **kw: (cur + "\nShort.\n", "")
+    c.compact()
+    _check("Every provides name is still there." in c.guidance.get("1.0", "end"),
+           c.guidance.get("1.0", "end"))
+
+    c.load_spec()
+    app.planner.revise_spec = lambda cur, change, **kw: (cur, "show takes a title now")
+    c._set(c.input, "give show a title")
+    c.revise()
+    _check("P's note: show takes a title now" in c.guidance.get("1.0", "end"),
+           c.guidance.get("1.0", "end"))
+
+
 def edit_goal_with_p():
     """For a project that exists: TASK.md in an editor, P's proposal in its place,
     written only by Save."""
@@ -840,7 +884,8 @@ SCENARIOS = {f.__name__: f for f in (badge, validate, grant, invalid_grant, stal
                                      check_goal_says_the_verdict,
                                      rename_node_shows_the_plan_first,
                                      code_affected_codes_in_order_and_locks,
-                                     find_in_any_text)}
+                                     find_in_any_text,
+                                     compact_shows_a_draft_and_a_lost_promise)}
 
 if __name__ == "__main__":
     SCENARIOS[sys.argv[1]]()

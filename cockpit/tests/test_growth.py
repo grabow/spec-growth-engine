@@ -5,6 +5,7 @@ and the consumers for a revise (additive where possible). P, H' and C are stubs.
 graph_root: app > api > api.hello (depends_on util), util."""
 import json
 
+import frontmatter
 import pytest
 
 import app
@@ -30,7 +31,8 @@ def test_every_cli_growth_step_is_recorded_with_its_author(graph_root, monkeypat
     monkeypatch.setenv("SGE_PLANNER_MODEL", "p-model")          # recorded as the step's `by`
     monkeypatch.setattr(planner, "draft_spec", lambda *_a, **_k: _DRAFT)
     monkeypatch.setattr(planner, "revise_spec",
-                        lambda cur, change, **_k: cur.replace("keep(item)", "keep(item)\n  - drop(item)"))
+                        lambda cur, change, **_k: (cur.replace("keep(item)",
+                                                               "keep(item)\n  - drop(item)"), ""))
     cli.main(["draft", str(graph_root), "api.store", "--parent", "api",
               "--intent", "keep items for later"])
     monkeypatch.setenv("SGE_ACTOR", "I")                       # as a codex agent sets it
@@ -119,7 +121,7 @@ def test_revise_tells_p_the_spine_the_consumers_and_to_grow_additively(monkeypat
 def test_cli_revise_passes_the_spine_and_the_consumers(graph_root, monkeypatch):
     seen = {}
     monkeypatch.setattr(planner, "revise_spec",
-                        lambda cur, change, **kw: seen.update(kw) or cur)
+                        lambda cur, change, **kw: seen.update(kw) or (cur, ""))
     cli.main(["revise", str(graph_root), "util", "--change", "x"])
     assert seen["consumers"] == ["api.hello"]
     assert set(seen["spine"]) == {"app"}            # the ancestors, not the node itself
@@ -276,7 +278,7 @@ def test_a_revise_that_says_nothing_keeps_the_request(monkeypatch):
 def test_the_cli_tells_the_planner_which_targets_exist(graph_root, monkeypatch):
     seen = {}
     monkeypatch.setattr(planner, "revise_spec",
-                        lambda cur, change, **kw: seen.update(kw) or cur)
+                        lambda cur, change, **kw: seen.update(kw) or (cur, ""))
     cli.main(["revise", str(graph_root), "util", "--change", "x"])
     assert "ARCHITECTURE.md" in seen["targets"] and "api.hello" in seen["targets"]
 
@@ -291,3 +293,75 @@ def test_the_manual_promise_holds_end_to_end(graph_root, monkeypatch):
     front = __import__("frontmatter").load(graph_root / "util" / "SPEC.md").metadata
     assert front["decision_requests"] == [_REQUEST]
     assert spec != (graph_root / "util" / "SPEC.md").read_text(encoding="utf-8")
+
+
+# ---- say each thing once; compact ----------------------------------------------
+
+def test_every_spec_p_writes_is_told_to_say_each_thing_once(monkeypatch):
+    current = "---\nid: util\nparent: app\nkind: component\ncontract: {provides: [log()]}\n---\n"
+    for call in (lambda: planner.draft_spec("log things", "util", "app", "component"),
+                 lambda: planner.revise_spec(current, "add flush"),
+                 lambda: planner.compact_spec(current)):
+        prompt = _prompt_of(monkeypatch, call)
+        assert "SAY EACH THING ONCE" in prompt and "no revision history" in prompt
+
+
+def test_revise_asks_for_the_reason_in_a_note_not_in_the_prose(monkeypatch):
+    current = "---\nid: util\nparent: app\nkind: component\ncontract: {provides: [log()]}\n---\n"
+    prompt = _prompt_of(monkeypatch, lambda: planner.revise_spec(current, "rename log"))
+    assert "`change_note` which promise changes and why" in prompt
+    assert "say in the prose which promise changes" not in prompt
+    answer = json.dumps({"contract": {"provides": ["log(level)"]}, "body": "Logs.",
+                         "change_note": "log takes a level now"})
+    monkeypatch.setattr(planner, "_client", lambda *_: _client_answering(
+        _Resp(answer, "tool_calls")))
+    spec, note = planner.revise_spec(current, "rename log", with_note=True)
+    assert note == "log takes a level now" and "takes a level" not in spec
+
+
+_LONG = ("---\nid: util\nparent: app\nkind: component\n"
+         "contract:\n  provides: [log(), flush()]\n  invariants: [never raises, never raises twice]\n"
+         "  error_behavior: [a bad level names it]\n"
+         "depends_on: [shared]\ncode: [util/*.py]\nstatus: implemented\n"
+         "decision_requests:\n- {target: ARCHITECTURE.md, proposal: x, reason: y}\n---\n\nLong.\n")
+
+
+def test_compact_keeps_what_is_not_ps_to_change(monkeypatch):
+    """P may shorten the contract; it may not re-point the node -- and a contract
+    key it leaves out comes back."""
+    answer = json.dumps({"contract": {"provides": ["log()", "flush()"],
+                                      "invariants": ["never raises"]},
+                         "depends_on": [], "code": ["elsewhere/**"], "status": "specd",
+                         "body": "Logs.", "change_note": "merged the two invariants"})
+    monkeypatch.setattr(planner, "_client", lambda *_: _client_answering(
+        _Resp(answer, "tool_calls")))
+    spec, note = planner.compact_spec(_LONG)
+    meta = frontmatter.loads(spec).metadata
+    assert (meta["depends_on"], meta["code"], meta["status"]) == (["shared"], ["util/*.py"],
+                                                                  "implemented")
+    assert meta["decision_requests"] and meta["contract"]["invariants"] == ["never raises"]
+    assert meta["contract"]["error_behavior"] == ["a bad level names it"]   # left out: back
+    assert note == "merged the two invariants"
+    assert planner.lost_promises(_LONG, spec) == []
+
+
+def test_lost_promises_names_a_provides_that_went_missing():
+    shorter = _LONG.replace("provides: [log(), flush()]", "provides: [log()]")
+    assert planner.lost_promises(_LONG, shorter) == ["flush"]
+
+
+def test_cli_compact_refuses_to_write_a_lost_promise(graph_root, monkeypatch, capsys):
+    import cli
+    from engine import intents
+    spec = graph_root / "util" / "SPEC.md"
+    before = spec.read_text(encoding="utf-8")
+    monkeypatch.setattr(planner, "compact_spec", lambda cur, arch="", **kw: (
+        cur.replace("log()", "logs()"), "renamed"))
+    assert cli.main(["compact", str(graph_root), "util"]) == 2
+    assert spec.read_text(encoding="utf-8") == before
+    assert "compacting dropped log" in capsys.readouterr().err
+    monkeypatch.setattr(planner, "compact_spec", lambda cur, arch="", **kw: (
+        cur + "\nShort.\n", "tidied the prose"))
+    assert cli.main(["compact", str(graph_root), "util"]) == 0
+    [entry] = [e for e in intents.history(graph_root, "util") if e["action"] == "compacted"]
+    assert entry["note"] == "tidied the prose"

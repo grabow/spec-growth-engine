@@ -434,6 +434,9 @@ class Cockpit(tk.Tk):
         self.draft_button.pack(side="left", padx=3)
         self.revise_button = ttk.Button(btns, text="Revise →", command=self.revise)
         self.revise_button.pack(side="left", padx=3)
+        # the same spec in fewer words -- a draft too, Save decides
+        self.compact_button = ttk.Button(btns, text="Compact", command=self.compact)
+        self.compact_button.pack(side="left", padx=3)
         # what Draft and Revise put into the editor is not saved until this is pressed
         self.save_button = ttk.Button(btns, text="Save", command=self.save_spec)
         self.save_button.pack(side="left", padx=(12, 3))
@@ -520,7 +523,8 @@ class Cockpit(tk.Tk):
                       ("New Node", self.new_node), ("Rename Node...", self.rename_node),
                       ("Delete Node", self.delete_node)])
         menu("Arch", [("Edit Arch", self.load_arch), ("Save Arch", self.save_arch)])
-        menu("Spec", [("Load Spec", self.load_spec), ("Save Spec", self.save_spec)])
+        menu("Spec", [("Load Spec", self.load_spec), ("Save Spec", self.save_spec),
+                      ("Compact Spec", self.compact)])
         menu("Build", [("Build Context", self.build_ctx), ("Codex", self.run_agent),
                        ("Codex Affected...", self.code_affected),
                        ("Run Tests", self.run_tests_action), None,
@@ -1300,7 +1304,8 @@ class Cockpit(tk.Tk):
         last = getattr(self, "_last_intent", None)
         if last and last[0] == nid:
             intents.record(self.root_dir, nid, last[1], last[2],
-                           by=llm.planner_model(), gate=gate)
+                           by=llm.planner_model(), gate=gate,
+                           note=last[3] if len(last) > 3 else "")
             self._last_intent = None
 
     def _reviewer_model(self) -> str:
@@ -1443,25 +1448,67 @@ class Cockpit(tk.Tk):
             self._set(self.guidance, f"Cannot read current SPEC.md: {exc}")
             return
         try:
-            spec = planner.revise_spec(
+            spec, note = planner.revise_spec(
                 current, instruction,
                 architecture=self.arch, model=llm.planner_model(),
                 spine=self._spine(self.nodes[nid].get("parent")),
                 consumers=nodeops.dependents_of(self.nodes, nid),
-                targets=self._request_targets(),
+                targets=self._request_targets(), with_note=True,
             )
         except RuntimeError as exc:
             self._set(self.guidance, f"Revise unavailable:\n{exc}")
             return
-        self._last_intent = (nid, "revised", instruction)   # recorded if it is saved
+        self._last_intent = (nid, "revised", instruction, note)   # recorded if it is saved
         self._set(self.view, spec)
         assessed = self._assess(nid, spec)
         self._set(
             self.guidance,
             f"Revised draft for `{nid}` is in the editor (status preserved). Review the "
             "diff against the current spec, then 'Save'. Then Validate / Drift."
+            + (f"\n\nP's note: {note}" if note else "")
             + ("\n\n" + changeset.report(*assessed) if assessed else ""),
         )
+
+    def compact(self) -> None:
+        """P says the target's SAVED spec in fewer words (planner.compact_spec):
+        every promise kept, what is said twice, what ARCHITECTURE.md already says,
+        verification that copies the criteria and revision history gone. Not
+        saved -- it lands in the editor like a revise, with the change set and P's
+        note, and a loud line if a `provides` name went missing on the way."""
+        if self._run_busy("Compact"):
+            return
+        nid = self._target()
+        if nid not in self.nodes:
+            self._set(self.guidance, "Pick an existing target node to compact.")
+            return
+        if self._unsaved_spec():
+            self._set(self.guidance, f"The editor holds a spec of {self._unsaved_spec()} "
+                                     "that is not saved -- Compact works on the saved one. "
+                                     "Save it, or pick the node again to discard it.")
+            return
+        try:
+            current = Path(self.nodes[nid]["_path"]).read_text(encoding="utf-8")
+            spec, note = planner.compact_spec(
+                current, self.arch, spine=self._spine(self.nodes[nid].get("parent")),
+                model=llm.planner_model())
+        except (OSError, RuntimeError) as exc:
+            self._set(self.guidance, f"Compact unavailable:\n{exc}")
+            return
+        lost = planner.lost_promises(current, spec)
+        self._last_intent = (nid, "compacted", "the same spec in fewer words", note)
+        self._set(self.view, spec)
+        assessed = self._assess(nid, spec)
+        said = [f"Compacted draft for `{nid}` is in the editor: "
+                f"{len(current.splitlines())} -> {len(spec.splitlines())} lines. Not saved "
+                "-- read it against the change set below, then 'Save'."]
+        said.append(f"\nWARNING -- compacting dropped from provides: {', '.join(lost)}. "
+                    "Every promise must survive: put it back, or do not save."
+                    if lost else "Every provides name is still there.")
+        if note:
+            said.append(f"\nP's note: {note}")
+        if assessed:
+            said.append("\n" + changeset.report(*assessed))
+        self._set(self.guidance, "\n".join(said))
 
     def load_arch(self) -> None:
         path = Path(self.root_dir) / parser.ARCH_NAME
@@ -2177,17 +2224,43 @@ class Cockpit(tk.Tk):
             return
         task, root = path.read_text(encoding="utf-8"), self.root_dir
         self._checking = True
-        self._set(self.guidance, "Checking against TASK.md: E runs the tests and the gate, "
-                                 "then -- on a green floor -- H' reads the goal against the "
-                                 "result. This takes a moment ...")
+        self._check_step, self._check_start = 0, time.monotonic()
+        self._tick_check()
 
         def work() -> None:
+            def progress(step: str) -> None:    # from the worker: hand it to Tk
+                self.after(0, self._check_progress, step)
             try:
-                result, error = orchestrate.check(root, task), None
+                result, error = orchestrate.check(root, task, progress=progress), None
             except Exception as exc:  # noqa: BLE001 -- said in Guidance
                 result, error = None, f"{type(exc).__name__}: {exc}"
             self.after(0, self._check_done, result, error)
         threading.Thread(target=work, daemon=True).start()
+
+    def _check_progress(self, step: str) -> None:
+        self._check_step = orchestrate.CHECK_STEPS.index(step)
+        self._render_check()
+
+    def _tick_check(self) -> None:
+        """Redraw every second while the check runs -- one clock, started once."""
+        if self._checking:
+            self._render_check()
+            self.guidance.after(1000, self._tick_check)
+
+    def _render_check(self) -> None:
+        """Where the check is, and for how long, so a long call to H' reads as
+        working, not as hung."""
+        if not self._checking:
+            return
+        lines = [f"Checking against TASK.md -- {self._fmt(time.monotonic() - self._check_start)}"]
+        for i, step in enumerate(orchestrate.CHECK_STEPS):
+            state = "done" if i < self._check_step else (
+                "working ..." if i == self._check_step else "")
+            lines.append(f"  [{i + 1}/{len(orchestrate.CHECK_STEPS)}] {step}   {state}")
+        if self._check_step == len(orchestrate.CHECK_STEPS) - 1:
+            lines.append("\nH' is one model call; with a high reasoning effort it can take "
+                         "a minute or two.")
+        self._set(self.guidance, "\n".join(lines))
 
     def _check_done(self, result: dict | None, error: str | None) -> None:
         self._checking = False
@@ -2366,7 +2439,7 @@ class Cockpit(tk.Tk):
         them: a run drafts through the command line, which no slider reaches, so
         while one runs the draft gate decides nothing."""
         for button in (getattr(self, "draft_button", None), getattr(self, "revise_button", None),
-                       getattr(self, "save_button", None)):
+                       getattr(self, "compact_button", None), getattr(self, "save_button", None)):
             try:
                 button.configure(state="disabled" if locked else "normal")
             except (AttributeError, tk.TclError):

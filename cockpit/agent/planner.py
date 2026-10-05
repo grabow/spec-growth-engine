@@ -73,11 +73,35 @@ SPEC_TOOL = {
                         },
                     },
                 },
-                "body": {"type": "string", "description": "Short prose for below the frontmatter."},
+                "body": {"type": "string", "description": "Short prose for below the "
+                         "frontmatter: what the node is for and why it is shaped this way, "
+                         "as it is NOW -- a few sentences, no revision history."},
+                "change_note": {"type": "string", "description": "Revise and compact only: "
+                                "which promise this revision changes, merges or drops, and "
+                                "why -- for the human who clears it. It is shown with the "
+                                "change set and recorded with the intent; it is NOT written "
+                                "into the spec."},
             },
         },
     },
 }
+
+
+# Say each thing once. Specs grew to a hundred lines for a WAV loader: the same
+# "opens no file, no socket, no window" five times over, ARCHITECTURE.md restated
+# per node, verification a second copy of the criteria, and the prose a log of
+# every revision. Every draft, revise and compact is told the same.
+_CONCISE = (
+    "SAY EACH THING ONCE. A promise appears in one place: `provides` what it offers, "
+    "`invariants` what always holds for THIS node, `error_behavior` how it fails, "
+    "`acceptance_criteria` what the tests prove. Do NOT restate ARCHITECTURE.md or the "
+    "ancestors' contracts (no network, no file writes, the layout ...): they reach every "
+    "node anyway. `design.verification` only for HOW a criterion is checked where that is "
+    "not obvious from the criterion -- never a second copy of the criteria; [] is fine. "
+    "No notes about one machine or environment (a library build, a Python version): "
+    "those belong in AGENT-NOTES.md. The prose (body) says what the node is for and why "
+    "it is shaped this way, as it is NOW, in a few sentences -- no revision history.\n\n"
+)
 
 
 def _clean_deps(deps, node_id: str, parent_id: str | None) -> list[str]:
@@ -222,13 +246,13 @@ def draft_spec(
         "- Derive the glob from that container convention + this node's id (e.g. a single "
         "Maven-module container `cli` -> component `cli.hello` owns "
         "['cli/src/main/java/app/hello/**', 'cli/src/test/java/app/hello/**']). Keep owners disjoint.\n"
-        "- A `component` or `code` node MUST own a non-empty glob -- NEVER leave code: [] "
+        "- A `component` MUST own a non-empty glob -- NEVER leave code: [] "
         "for a code-owning node (that abdicates the layout decision to the coder).\n"
         "- Only `system`/`container` (pure decomposition) may set code: [] (a container "
         "may also own just its build manifest, e.g. ['cli/pom.xml']).\n\n"
-        "VERIFICATION (design.verification): give one line per check that proves the "
-        "contract, derived from acceptance_criteria -- the INWARD 'how to verify', "
-        "distinct from the OUTWARD acceptance_criteria 'what to prove'. Any check that "
+        "VERIFICATION (design.verification): the INWARD 'how to verify', distinct from "
+        "the OUTWARD acceptance_criteria 'what to prove' -- a line only where HOW a "
+        "criterion is checked is not obvious from it, never a copy of it. Any check that "
         "needs a live credential or network MUST be marked 'runs only when <ENV_VAR> "
         "is set, skipped otherwise' (per the ARCHITECTURE.md testing invariant: tests "
         "pass offline). Do not use 'word: word' colons inside list items (YAML). For a "
@@ -237,6 +261,7 @@ def draft_spec(
         "invariant, or a change to another node's contract -- goes in `decision_requests` "
         "(target, proposal worded as it should appear there, reason). It grants nothing "
         "and it asks H. Record it there instead of assuming it in this contract.\n\n"
+        + _CONCISE +
         "CONTENT RULES: only the contract of THIS change; derive acceptance_criteria "
         "from the examples; do not pre-specify unrelated future components; keep it "
         "lean. Call the emit_spec function."
@@ -299,8 +324,12 @@ def revise_spec(
     spine: dict | None = None,
     consumers: list[str] | None = None,
     targets: set[str] | None = None,
-) -> str:
+    with_note: bool = False,
+) -> str | tuple[str, str]:
     """Return a REVISED SPEC.md: the model edits the CURRENT spec per `instruction`.
+    With `with_note`, (spec, note): P's word on which promise it changed and why --
+    shown with the change set and recorded with the intent, never written into the
+    spec, whose prose describes the node as it is now.
 
     Unlike draft_spec (which regenerates from scratch and resets status to 'specd'),
     revise carries the existing spec in, preserves every field not explicitly changed,
@@ -336,9 +365,11 @@ def revise_spec(
         "existing entries word for word: the engine reads contracts as text, and a "
         "reworded entry counts as removed, so it would hold a pure addition as a "
         "breaking change. "
-        "If the requested change cannot be additive, make it anyway and say in the "
-        "prose which promise changes and why: the engine holds a breaking change for a "
-        "decision, and its consumers must follow.\n\n"
+        "If the requested change cannot be additive, make it anyway and say in "
+        "`change_note` which promise changes and why: the engine holds a breaking change "
+        "for a decision, and its consumers must follow. That note is NOT part of the "
+        "spec: keep the prose describing the node as it is now, and drop from it any "
+        "earlier note about a revision.\n\n"
         f"ARCHITECTURE.md (global invariants):\n{architecture or '(none)'}\n\n"
         "ABOVE YOU: a decision this node needs but may not make -- an ARCHITECTURE.md "
         "invariant, or a change to another node's contract -- goes in `decision_requests` "
@@ -347,10 +378,11 @@ def revise_spec(
         "RULES: `depends_on` is USAGE only (never parent/ancestor/self/child; acyclic). "
         "`code` globs are PROJECT-ROOT-RELATIVE and point into the code tree per the "
         "owning container's code-layout invariants in the Spine (code is separate from the "
-        "spec tree); a code-owning component never has code: []. `design.verification` is one line per "
-        "check derived from acceptance_criteria; mark live-credential/network checks as "
-        "'runs only when <ENV_VAR> is set, skipped otherwise'; no 'word: word' colons in "
-        "list items (YAML). Return the COMPLETE updated spec via emit_spec."
+        "spec tree); a code-owning component never has code: []. Mark "
+        "live-credential/network checks as 'runs only when <ENV_VAR> is set, skipped "
+        "otherwise'; no 'word: word' colons in list items (YAML).\n\n"
+        + _CONCISE +
+        "Return the COMPLETE updated spec via emit_spec."
     )
     data, finish = _call_tool(client, SPEC_TOOL, prompt, model=model)
     if not data:
@@ -389,7 +421,72 @@ def revise_spec(
             head_meta[key] = data["waiver"]  # a new proposal, as a request
     head = yaml.safe_dump(head_meta, sort_keys=False, allow_unicode=False).rstrip()
     body = data.get("body", "").strip()
-    return f"---\n{head}\n---\n\n{body}\n"
+    spec = f"---\n{head}\n---\n\n{body}\n"
+    return (spec, str(data.get("change_note") or "").strip()) if with_note else spec
+
+
+def compact_spec(current_spec: str, architecture: str = "", spine: dict | None = None,
+                 model: str | None = None) -> tuple[str, str]:
+    """The same spec in fewer words: (spec, note). Every promise stays -- a contract
+    key P leaves out comes back, every `provides` name should survive (lost_promises
+    says which did not) -- while what is said twice, what ARCHITECTURE.md and the
+    ancestors already say, verification that copies the criteria, notes about one
+    machine and revision history in the prose go. id, parent, kind, status,
+    depends_on, code, requests and waivers are copied, never P's to change here.
+    Nothing is saved: the result is a draft for H, like any revise."""
+    client = _client()
+    try:
+        fm = dict(frontmatter.loads(current_spec).metadata)
+    except Exception:
+        fm = {}
+    node_id = fm.get("id", "")
+    prompt = (
+        f"Compact the SPEC.md of node `{node_id}`: the SAME spec in fewer words.\n\n"
+        f"CURRENT SPEC.md:\n{current_spec}\n\n"
+        f"ANCESTOR CONTRACTS (they reach this node anyway):\n{spine or {}}\n\n"
+        f"ARCHITECTURE.md (it reaches this node anyway):\n{architecture or '(none)'}\n\n"
+        "KEEP every promise: every `provides` entry's NAME -- the thing a consumer calls "
+        "or reads -- and every invariant, error and acceptance criterion that says "
+        "something of its own. Keep every contract key; shorten its list, never drop it. "
+        "Shortening a promise is fine; changing what it promises is not.\n"
+        "REMOVE: what is said twice (merge it into one entry); what ARCHITECTURE.md or "
+        "the ancestors already say; design.verification lines that only restate an "
+        "acceptance criterion; notes about one machine or environment; revision "
+        "history in the prose.\n\n"
+        + _CONCISE +
+        "In `change_note`: one or two sentences on what you merged or dropped, and why. "
+        "Return the COMPLETE compacted spec via emit_spec."
+    )
+    data, finish = _call_tool(client, SPEC_TOOL, prompt, model=model)
+    if not data:
+        raise RuntimeError(_no_spec(finish))
+    kind = fm.get("kind", "component")
+    head_meta = {
+        "id": node_id, "parent": fm.get("parent"), "kind": kind,
+        "contract": _keep_omitted(data.get("contract"), fm.get("contract")),
+        "design": _keep_omitted(data.get("design"), fm.get("design")),
+        "depends_on": list(fm.get("depends_on") or []),
+        "code": list(fm.get("code") or []),
+        "status": fm.get("status", "specd"),
+    }
+    for key in ("decision_requests", *_PRESERVED_ON_REVISE):
+        if key in fm:
+            head_meta[key] = fm[key]           # not P's to touch in a compaction
+    head = yaml.safe_dump(head_meta, sort_keys=False, allow_unicode=False).rstrip()
+    body = data.get("body", "").strip()
+    return f"---\n{head}\n---\n\n{body}\n", str(data.get("change_note") or "").strip()
+
+
+def lost_promises(before: str, after: str) -> list[str]:
+    """The `provides` names `before` had and `after` lacks -- what a compaction
+    must never do, and the one loss a long -/+ list can hide."""
+    from engine import changeset
+    try:
+        old = frontmatter.loads(before).metadata
+        new = frontmatter.loads(after).metadata
+    except Exception:
+        return []
+    return sorted(changeset.provided_names(old) - changeset.provided_names(new))
 
 
 def one_line(prompt: str, model: str | None = None) -> str:

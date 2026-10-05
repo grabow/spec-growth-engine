@@ -140,12 +140,15 @@ def test_revise_hands_p_the_current_spec(graph_root, monkeypatch, capsys):
 
     def revise(current, change, **_k):
         seen.append((current, change))
-        return current.replace("log()", "log()\n  - flush()")
+        return current.replace("log()", "log()\n  - flush()"), "flush is new"
     monkeypatch.setattr(planner, "revise_spec", revise)
     assert cli.main(["revise", str(graph_root), "util", "--change", "add flush"]) == 0
     assert "log()" in seen[0][0] and seen[0][1] == "add flush"
     assert "flush()" in (graph_root / "util" / "SPEC.md").read_text(encoding="utf-8")
-    assert "change set util: SOFT" in capsys.readouterr().out
+    assert "flush is new" not in (graph_root / "util" / "SPEC.md").read_text(encoding="utf-8")
+    out = capsys.readouterr().out
+    assert "P's note: flush is new" in out                      # said, not written in
+    assert "change set util: SOFT" in out
     assert _log(graph_root)[-1]["action"] == "revised"
 
 

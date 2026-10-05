@@ -52,8 +52,15 @@ status:     # specd | in-slice | implemented | verified
 ---
 
 # <Title>
-Prose for humans: why it is shaped this way, trade-offs, decisions.
+Prose for humans: what the node is for, why it is shaped this way, trade-offs,
+decisions -- as it is NOW, in a few sentences. Not its history: why a revision
+changed what it changed is recorded with that revision (the growth record).
 ```
+
+Say each thing once: a promise lives in one field, and what ARCHITECTURE.md or
+the ancestors' contracts say reaches every node through its context -- it is not
+repeated here. `design.verification` says HOW a criterion is checked where that is
+not obvious; it is not a second copy of `acceptance_criteria`.
 
 The skeleton never changes. Only the **content of `contract`/`design`** differs
 by level — that is the field profile below.

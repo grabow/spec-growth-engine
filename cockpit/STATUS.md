@@ -142,7 +142,8 @@ runlog.py          one readable line per event of a run's stream -- rendered onc
                    for the cockpit's Run window and the run's log (.sge/runs/NN.log)
 cli.py             headless gate: validate | drift | gate | init (lay a floor; --like OLD) |
                    manuals (render them again) | run (an agent, in rounds) |
-                   check (E + H' against TASK.md, no agent) | rename (a node and its
+                   check (E + H' against TASK.md, no agent) | compact (P: the same spec
+                   in fewer words; refused if a provides name would go) | rename (a node and its
                    subtree; every field naming it follows, the code stays) |
                    pending (H's inbox: waivers, decisions, HARD changes, delegated) | prepare |
                    decide | accept | reject | delegate | test | draft | revise | code | intents |
@@ -161,7 +162,7 @@ GUI menus   Open     Open · New Project... (lays the floor) · New Project Like
             Node     Show Tree · New Node · Rename Node... (the plan first; the
                      subtree and every edge follow, the code stays) · Delete Node
             Arch     Edit Arch · Save Arch
-            Spec     Load Spec · Save Spec
+            Spec     Load Spec · Save Spec · Compact Spec
             Build    Build Context (a read-only preview) · Codex (builds the context
                      itself, from the saved specs) · Codex Affected... (the node and
                      whoever uses it, in order, then the tests and the gate) ·
@@ -178,7 +179,10 @@ GUI extras  Cmd+F (macOS) / Ctrl+F in every text -- the editor, Guidance, Edit G
             nodes awaiting H are amber in the graph
             Target box: picking a node loads its SPEC.md (asks before an unsaved
             spec in the editor goes) ·
-            Draft ⟶ / Revise → · autonomy slider (D0..D2, the draft gate) ·
+            Draft ⟶ / Revise → / Compact (the same spec in fewer words, a draft;
+            warns when a provides name went missing) · P's note on a revise, shown
+            and kept in the growth record, never written into the spec ·
+            autonomy slider (D0..D2, the draft gate) ·
             the delegation switch beside it (per project, on | off) · node graph window
             (zoom, collapse, dependency edges) · Codex window with status bar
             Run window: one line per round (claim, floor, gaps, what it asks H),

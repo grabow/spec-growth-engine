@@ -619,8 +619,10 @@ deleted from the cockpit:
 - **Check Goal (TASK.md)** (Build menu) - does the project meet its goal, as it
   stands? E runs the tests and the gate, and on a green floor H' checks the
   result against `TASK.md` -- what a run's last round says, without the run: no
-  agent, no session, nothing changed but the recorded test evidence. The verdict
-  goes to Guidance: **done** (green, no gap, nothing waits for you), **gaps**
+  agent, no session, nothing changed but the recorded test evidence. While it
+  runs, Guidance shows the step it is in -- [1/2] the tests and the gate, [2/2]
+  H' -- and a clock that counts on, since the call to H' can take a minute or two
+  (`cli.py check` says the steps on stderr). The verdict then goes to Guidance: **done** (green, no gap, nothing waits for you), **gaps**
   (with the list), **asking** (something waits in Requests -- a pending HARD
   change counts too), **red** (the failing tests and gate errors; H' is not
   asked) or **unchecked** (H' not reachable). The use: after you worked through
@@ -731,6 +733,27 @@ read-only text (a preview) is searched all the same.
    the planner applies the change request (Intent box) in place, preserving untouched
    fields (code globs, depends_on, design.verification, ...) AND the node's status.
    Use Draft for a fresh node, Revise to evolve one. (Or **Load SPEC** to edit by hand.)
+   Why a revise changes what it changes, P says in a note of its own -- shown in
+   Guidance above the change set and kept in the growth record when you save --
+   not in the spec: the prose describes the node as it is now.
+
+   **Compact** (beside Revise; Spec > Compact Spec) - the target's SAVED spec in
+   fewer words. Every promise stays; what is said twice, what ARCHITECTURE.md and
+   the ancestors already say, verification lines that copy the criteria, notes
+   about one machine and revision history in the prose go. Like Revise it lands
+   in the editor unsaved, with the change set and P's note -- and with a loud
+   WARNING if a `provides` name went missing on the way (the one loss a long
+   `-`/`+` list can hide). Compacting rewords promises, so expect a HARD change
+   set: you read it and Save. Headless: `cli.py compact ROOT ID` (it refuses to
+   write a spec that lost a `provides` name unless `--force`).
+
+   **What a spec says, and where.** Each thing once: `provides` what the node
+   offers, `invariants` what always holds for IT, `error_behavior` how it fails,
+   `acceptance_criteria` what the tests prove; `design.verification` only for HOW
+   a criterion is checked where that is not obvious. What ARCHITECTURE.md or the
+   ancestors say reaches the node anyway and is not repeated. The prose below
+   the frontmatter: what the node is for and why it is shaped this way, in a few
+   sentences. P is told all of this for every draft, revise and compaction.
 3. **Save** - write the reviewed spec, reindex. The frontmatter is
    auto-repaired for the one recurring YAML breakage (an unquoted `word: word`
    colon or leading backtick in a scalar): the offending line is quoted, reported in
