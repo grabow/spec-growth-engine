@@ -4,6 +4,10 @@ The cockpit is the runnable tool for the Spec Growth Engine method. It provides
 a guided desktop UI and CLI over deterministic checks for SPEC.md graphs. The
 method itself lives in `../spec-growth-engine/`.
 
+**New here? Start with [MANUAL.md](MANUAL.md)** -- the cockpit step by step, with
+screenshots: a small program built from nothing, one button at a time, and every
+menu item and button explained. This README is the full reference behind it.
+
 ASCII-based; `.md` file extensions are kept, but no markdown rendering is used
 (plain `tk.Text`).
 

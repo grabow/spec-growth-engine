@@ -8,6 +8,7 @@ test command.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import time
 from pathlib import Path
@@ -70,6 +71,16 @@ def build_roots(nodes: dict[str, dict], project_root: str) -> list[Path]:
     return sorted(r for r in roots if test_command(r) is not None)
 
 
+def project_env() -> dict[str, str]:
+    """The environment a PROJECT's tools get: the cockpit's own, minus its virtual
+    environment. The cockpit runs in a uv venv of its own; handed on, VIRTUAL_ENV
+    made every `uv run` in the project warn that it does not match -- with the
+    cockpit's path in it -- in every test run and every session of C."""
+    env = dict(os.environ)
+    env.pop("VIRTUAL_ENV", None)
+    return env
+
+
 def run_tests(node: dict, project_root: str) -> tuple[subprocess.Popen, Path, list[str]]:
     """Run the project's tests at the node's build root.
 
@@ -81,6 +92,7 @@ def run_tests(node: dict, project_root: str) -> tuple[subprocess.Popen, Path, li
     if cmd is None:
         raise ValueError(f"no recognized build manifest in {root}; cannot run tests")
     proc = subprocess.Popen(
-        cmd, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        cmd, cwd=str(root), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        env=project_env(),
     )
     return proc, root, cmd

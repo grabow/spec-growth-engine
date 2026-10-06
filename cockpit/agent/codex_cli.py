@@ -23,8 +23,6 @@ Two things every caller must know:
 """
 from __future__ import annotations
 
-import os
-
 from . import llm
 
 AGENT_ROLES = llm.AGENT_ROLES
@@ -77,7 +75,9 @@ def command(role: str, *, json_events: bool = False,
     # SGE_ACTOR: who is writing, for the growth record (engine/intents.py) --
     # an intent drafted from inside this agent's shell is I's, not H's
     actor = {"intent": "I", "coder": "C"}[role]
-    return argv, dict(os.environ, **{var: ep["api_key"], "SGE_ACTOR": actor})
+    import testrun   # at call time: testrun imports the agent package
+    # the project's environment, not the cockpit's venv (testrun.project_env)
+    return argv, dict(testrun.project_env(), **{var: ep["api_key"], "SGE_ACTOR": actor})
 
 
 def describe(role: str) -> str:

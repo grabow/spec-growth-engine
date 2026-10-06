@@ -537,7 +537,8 @@ def cmd_test(root: str) -> int:
     for build_root in roots:
         cmd = testrun.test_command(build_root)
         started = testrun.now()
-        run = subprocess.run(cmd, cwd=str(build_root), capture_output=True, text=True)
+        run = subprocess.run(cmd, cwd=str(build_root), capture_output=True, text=True,
+                             env=testrun.project_env())
         passed = run.returncode == 0
         failed |= not passed
         covered = testrun.record(nodes, root, build_root, passed, " ".join(cmd), started)

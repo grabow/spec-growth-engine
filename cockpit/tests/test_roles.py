@@ -505,3 +505,17 @@ def test_the_deepseek_example_is_complete_but_for_the_keys(monkeypatch):
         monkeypatch.setenv(key, value)
     for role in llm.ROLES:
         assert llm.missing(role) == [f"{llm.variable(role, 'API_KEY')} is still the placeholder"]
+
+
+def test_the_project_gets_no_virtual_env_of_the_cockpit(monkeypatch):
+    """The cockpit runs in its own venv; handed on, VIRTUAL_ENV made every `uv run`
+    in the project warn -- with the cockpit's path -- in tests and in C's sessions."""
+    import testrun
+    from agent import codex_cli
+    monkeypatch.setenv("VIRTUAL_ENV", "/somewhere/cockpit/.venv")
+    for name, value in (("BASE_URL", "https://api.example/v1"), ("API_KEY", "k"),
+                        ("MODEL", "m"), ("HARNESS", "codex-cli")):
+        monkeypatch.setenv(f"SGE_CODER_{name}", value)
+    assert "VIRTUAL_ENV" not in testrun.project_env()
+    _argv, env = codex_cli.command("coder")
+    assert "VIRTUAL_ENV" not in env and env["SGE_ACTOR"] == "C"

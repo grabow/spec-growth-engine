@@ -55,6 +55,10 @@ always runs and always blocks. See
 
 ## Getting started
 
+New to it? [`cockpit/MANUAL.md`](cockpit/MANUAL.md) walks through the cockpit step
+by step, with screenshots -- a small program built from nothing, every button
+explained.
+
 Requirements:
 
 - **Python 3.12** and [**uv**](https://docs.astral.sh/uv/) -- for everything.

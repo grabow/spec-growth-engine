@@ -3015,7 +3015,7 @@ class Cockpit(tk.Tk):
         self.reload_nodes()
         self.target["values"] = sorted(self.nodes)
         msg = (f"Coder finished (exit {returncode}). Reloaded.\n"
-               "Verify: 'Build context' (own code should appear) and 'Drift (code)'.")
+               "Next: 'Run Tests' (the whole build), then Validate > Gate.")
         if heal:
             msg += "\nSPEC YAML check:\n  " + "\n  ".join(heal)
         self._set(self.guidance, msg)
