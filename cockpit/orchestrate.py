@@ -63,11 +63,13 @@ import runlog  # noqa: E402
 from engine import autonomy, iteration, lifecycle, parser, unsupervised as unsup  # noqa: E402
 
 
-def session(argv: list[str], prompt: str, env: dict, out) -> dict:
-    """Run one codex session; pass its events through to `out`; return what the
-    rule needs: the session id, I's last message, whether it did any work, and
-    why it failed, if it did."""
-    proc = subprocess.Popen(argv + [prompt], stdin=subprocess.DEVNULL,   # see codex_cli
+def session(argv: list[str], prompt: str, env: dict, out, *, cwd: str) -> dict:
+    """Run one codex session in `cwd` -- the project, whoever started the run (the
+    cockpit's window or `cli.py run`, in the cockpit's directory); pass its events
+    through to `out`; return what the rule needs: the session id, I's last
+    message, whether it did any work, and why it failed, if it did."""
+    proc = subprocess.Popen(argv + [prompt], cwd=cwd,
+                            stdin=subprocess.DEVNULL,   # see codex_cli
                             stdout=subprocess.PIPE, text=True, env=env)
     info = {"thread": None, "message": "", "worked": 0, "failed": None}
     last_error = ""
@@ -411,7 +413,7 @@ def run(root: str, task: str, prompt: str, max_rounds: int = iteration.MAX_ROUND
         if watching:
             watching.start()
         try:
-            info = start(argv, text, env, out)
+            info = start(argv, text, env, out, cwd=str(root))
         finally:
             if watching:
                 watching.stop()

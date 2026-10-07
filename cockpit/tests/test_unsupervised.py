@@ -156,7 +156,7 @@ class _Run:
         self._sessions, self._stood, self._goals = iter(sessions), iter(stood), iter(goals)
         self.out = io.StringIO()
 
-    def start(self, argv, text, env, out):
+    def start(self, argv, text, env, out, *, cwd):
         self.started.append(text)
         return next(self._sessions)
 
@@ -333,7 +333,7 @@ def test_an_unsupervised_run_end_to_end_on_disk(graph_root):
     out = io.StringIO()
     outcome = orchestrate.run(
         str(graph_root), "the task", "first prompt", 5, out=out,
-        start=lambda argv, text, env, o: next(sessions),
+        start=lambda argv, text, env, o, cwd: next(sessions),
         check_goal=lambda root, task, fl, previous=(): {"gaps": [], "waiting": []},
         command=lambda role, **k: (["codex"], {}), unsupervised=True,
         stand_in_h=lambda root, task: unsupervised.stand_in(root, answer,

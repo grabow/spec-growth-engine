@@ -237,17 +237,18 @@ def test_a_session_is_passed_through_and_read(monkeypatch):
     monkeypatch.setattr(orchestrate.subprocess, "Popen",
                         lambda argv, **kw: seen.update(argv=argv, **kw) or _Popen(lines))
     out = io.StringIO()
-    info = orchestrate.session(["codex", "exec"], "go", {"A": "1"}, out)
+    info = orchestrate.session(["codex", "exec"], "go", {"A": "1"}, out, cwd="/proj")
     assert info == {"thread": "t-1", "message": "all\nDONE", "worked": 1, "failed": None}
     assert out.getvalue() == "".join(lines)
     assert seen["stdin"] is subprocess.DEVNULL and seen["argv"] == ["codex", "exec", "go"]
+    assert seen["cwd"] == "/proj"     # the project, not wherever the run was started
 
 
 def test_a_session_that_dies_says_why(monkeypatch):
     lines = _events({"type": "thread.started", "thread_id": "t-1"},
                     {"type": "error", "message": "stream disconnected"})
     monkeypatch.setattr(orchestrate.subprocess, "Popen", lambda argv, **kw: _Popen(lines, 1))
-    info = orchestrate.session(["codex"], "go", {}, io.StringIO())
+    info = orchestrate.session(["codex"], "go", {}, io.StringIO(), cwd=".")
     assert info["failed"] == "codex exited with 1: stream disconnected"
 
 
@@ -262,10 +263,12 @@ class _Run:
     def __init__(self, root, sessions, floors=(), goals=()):
         self.root, self.started, self.floors_checked, self.goals_checked = root, [], 0, 0
         self.previous: list[list[str]] = []
+        self.cwds: list[str] = []
         self._sessions, self._floors, self._goals = iter(sessions), iter(floors), iter(goals)
         self.out = io.StringIO()
 
-    def start(self, argv, text, env, out):
+    def start(self, argv, text, env, out, *, cwd):
+        self.cwds.append(cwd)
         self.started.append((argv, text))
         return next(self._sessions)
 
@@ -296,6 +299,7 @@ class _Run:
 def test_gaps_send_i_back_into_the_same_session_until_the_goal_is_met(graph_root):
     run = _Run(graph_root, [_info(), _info()], [_GREEN, _GREEN], [_GAPS, {"gaps": []}])
     assert run() == "done"
+    assert run.cwds == [str(graph_root)] * 2       # every round works in the project
     (first_argv, first_text), (argv, text) = run.started
     assert first_text == "first prompt" and "resume" not in first_argv
     assert argv[2] == "resume" and argv[-1] == "t-1"
@@ -666,7 +670,7 @@ def test_the_watch_reports_the_last_new_line_of_a_coder_log(tmp_path):
 def test_the_run_passes_on_what_c_did_during_a_session(graph_root):
     """The watch runs while the session does -- and looks once more when it ends,
     so C's last line is not lost."""
-    def session_that_codes(argv, text, env, out):
+    def session_that_codes(argv, text, env, out, *, cwd):
         log = graph_root / ".sge" / "code" / "util-20260929T130000.log"
         log.parent.mkdir(parents=True, exist_ok=True)
         log.write_text("wrote util/log.py\n", encoding="utf-8")
