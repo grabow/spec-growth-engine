@@ -342,6 +342,12 @@ merged into that node: it is prose. The ADR authorises the change, and I makes
 it through P -- which is what lets an unsupervised run change a file H gave it,
 and only that change.
 
+The run's closing line lists everything H′ decided in H's place, for H to
+review: what the stand-in decided between rounds, and what H′ decided inside a
+round because I asked for it -- `cli.py decide` under the delegation, in a
+supervised run too. The second is read from the audit log, for the time the
+session ran; the unsupervised guess run's closing line had missed it.
+
 This is the second exception to *agents author no intent* (GOVERNANCE §6), and
 the only one above a node: H′ chooses among answers it did not write. It is why
 unsupervised is a setting of its own, chosen per run, and why it needs the

@@ -483,13 +483,17 @@ HARNESS, the agent CLI that runs them. Every role may take one more, optional:
 the REASONING_EFFORT, how hard the model thinks (e.g. `low | medium | high`, what
 the provider accepts), passed as written -- to the chat call for P and H', to
 the Codex CLI (`model_reasoning_effort`) for I and C. Unset, the provider's own
-default holds.
+default holds. P and H' take one more, also optional: MAX_TOKENS, the most one
+answer may take, its reasoning included. Unset, the provider's default limit
+holds -- and DeepSeek's cut a goal check off at high reasoning; the Codex CLI
+sets its own for I and C.
 
 ```sh
 SGE_PLANNER_BASE_URL=https://...
 SGE_PLANNER_API_KEY=...
 SGE_PLANNER_MODEL=<model id>       # the same three lines for REVIEWER
 SGE_PLANNER_REASONING_EFFORT=high  # optional, for every role
+SGE_PLANNER_MAX_TOKENS=65536       # optional, P and H' only
 
 SGE_CODER_BASE_URL=https://...
 SGE_CODER_API_KEY=...
@@ -498,8 +502,8 @@ SGE_CODER_REASONING_EFFORT=high
 SGE_CODER_HARNESS=codex-cli        # the same lines for INTENT
 ```
 
-One order in every block: BASE_URL, API_KEY, MODEL, REASONING_EFFORT, and
-HARNESS for the two agents.
+One order in every block: BASE_URL, API_KEY, MODEL, REASONING_EFFORT, then
+MAX_TOKENS for P and H' or HARNESS for the two agents.
 
 **Nothing falls back.** A role without its three lines is not configured -- not
 borrowed from another role, not defaulted to a provider -- and whatever asks for

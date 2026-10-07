@@ -385,6 +385,55 @@ def test_the_chat_call_carries_the_roles_reasoning_effort(monkeypatch):
     assert "reasoning_effort" not in seen[1]
 
 
+def _recording_client(seen: list, finish="stop", answer='{"ok": 1}'):
+    from types import SimpleNamespace
+
+    def create(**kw):
+        seen.append(kw)
+        call = SimpleNamespace(function=SimpleNamespace(arguments=answer))
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(tool_calls=[call] if answer else None),
+            finish_reason=finish)])
+
+    return SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+
+
+_TOOL = {"type": "function", "function": {"name": "t", "parameters": {}}}
+
+
+def test_the_chat_call_carries_the_roles_output_limit(monkeypatch):
+    """The unsupervised guess run ended UNCHECKED: with no limit of ours,
+    DeepSeek's default cut H''s goal check off. A role may set its own."""
+    seen = []
+    monkeypatch.setenv("SGE_REVIEWER_MAX_TOKENS", "65536")
+    llm._call_tool(_recording_client(seen), _TOOL, "p", model="m", role="reviewer")
+    llm._call_tool(_recording_client(seen), _TOOL, "p", model="m")      # P's: unset
+    assert seen[0]["max_tokens"] == 65536
+    assert "max_tokens" not in seen[1]
+
+
+def test_a_cut_off_answer_names_the_setting_that_raises_the_limit(monkeypatch):
+    with pytest.raises(RuntimeError, match="SGE_REVIEWER_MAX_TOKENS"):
+        llm._call_tool(_recording_client([], finish="length", answer=""), _TOOL, "p",
+                       model="m", role="reviewer")
+
+
+def test_the_output_limit_is_said_and_checked_for_the_chat_roles_only(monkeypatch):
+    for role in ("REVIEWER", "CODER"):
+        monkeypatch.setenv(f"SGE_{role}_BASE_URL", "https://api.example/v1")
+        monkeypatch.setenv(f"SGE_{role}_API_KEY", "k")
+        monkeypatch.setenv(f"SGE_{role}_MODEL", "m")
+    monkeypatch.setenv("SGE_CODER_HARNESS", "codex-cli")
+    monkeypatch.setenv("SGE_REVIEWER_MAX_TOKENS", "32000")
+    monkeypatch.setenv("SGE_CODER_MAX_TOKENS", "32000")
+    assert llm.describe("reviewer").endswith(", max 32000 tokens")
+    assert "max" not in llm.describe("coder")             # the harness decides, not we
+    assert llm.endpoint("coder")["max_tokens"] is None
+    monkeypatch.setenv("SGE_REVIEWER_MAX_TOKENS", "lots")
+    assert llm.missing("reviewer") == ["SGE_REVIEWER_MAX_TOKENS is not a whole number above 0"]
+    assert llm.endpoint("reviewer")["max_tokens"] is None
+
+
 def test_c_never_gets_an_open_stdin(monkeypatch):
     """codex exec waits on an open stdin: the first smoke test hung until killed."""
     import subprocess

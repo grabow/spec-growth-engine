@@ -308,6 +308,45 @@ def _review_lines(stood: dict) -> list[str]:
     return out
 
 
+AUDIT = Path(".sge") / "autonomy.jsonl"
+
+
+def _audit_size(root: str) -> int:
+    path = Path(root) / AUDIT
+    return path.stat().st_size if path.exists() else 0
+
+
+def _decided_inside(root: str, offset: int) -> list[str]:
+    """What H' decided in H's place WHILE the session ran, read from the audit log
+    from `offset` on: the intent author can ask for that itself (`cli.py decide`,
+    under the delegation). The unsupervised guess run did, and its closing line
+    listed nothing for H to review -- only what the stand-in decides BETWEEN rounds
+    reached it (_review_lines)."""
+    path = Path(root) / AUDIT
+    if not path.exists():
+        return []
+    with path.open("rb") as fh:
+        fh.seek(offset)
+        raw = fh.read().decode("utf-8", "replace")
+    out = []
+    for line in raw.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(entry, dict) or entry.get("actor") != "H'":
+            continue
+        action = str(entry.get("action", ""))
+        if action.startswith("request-"):
+            out.append(f"{action[len('request-'):]}: {entry.get('node')} -> "
+                       f"{entry.get('target')}: {entry.get('proposal')}")
+        elif action == "accepted":
+            out.append(f"accepted under the delegation: {entry.get('node')}"
+                       if entry.get("gate") == "HARD"
+                       else f"accepted by H' ({entry.get('gate')}): {entry.get('node')}")
+    return out
+
+
 def _emit(out, event: dict) -> None:
     out.write(json.dumps(event, ensure_ascii=False) + "\n")
     out.flush()
@@ -399,7 +438,8 @@ def run(root: str, task: str, prompt: str, max_rounds: int = iteration.MAX_ROUND
     for H after every measured round (stand_in_h), before the goal is checked."""
     out = _Serialized(out or sys.stdout)
     mode = "unsupervised" if unsupervised else "on"
-    review: list[str] = []         # what H' decided in H's place, over the whole run
+    review: list[str] = []         # what H' decided in H's place, over the whole run --
+    #                                between rounds, and inside them at I's request
     if command is None:
         from agent import codex_cli
         command = codex_cli.command
@@ -412,11 +452,13 @@ def run(root: str, task: str, prompt: str, max_rounds: int = iteration.MAX_ROUND
         watching = watch(root, out) if watch else None
         if watching:
             watching.start()
+        audited = _audit_size(root)
         try:
             info = start(argv, text, env, out, cwd=str(root))
         finally:
             if watching:
                 watching.stop()
+        review += _decided_inside(root, audited)
         thread = info["thread"] or thread
         claimed, why = iteration.claim(info["message"])
         fl = gl = None
@@ -463,7 +505,8 @@ def run(root: str, task: str, prompt: str, max_rounds: int = iteration.MAX_ROUND
         if step["next"] == "stop":
             _emit(out, {"type": "sge.run", "outcome": step["outcome"], "rounds": round_no,
                         "why": step["why"], "thread": thread,
-                        **({"mode": mode, "review": review} if unsupervised else {})})
+                        **({"mode": mode} if unsupervised else {}),
+                        **({"review": review} if unsupervised or review else {})})
             return step["outcome"]
         round_no += 1
         text = iteration.resume_prompt(round_no, max_rounds, fl, gl, stood["answered"])

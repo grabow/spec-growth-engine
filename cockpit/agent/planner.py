@@ -76,6 +76,16 @@ SPEC_TOOL = {
                 "body": {"type": "string", "description": "Short prose for below the "
                          "frontmatter: what the node is for and why it is shaped this way, "
                          "as it is NOW -- a few sentences, no revision history."},
+                "removed_keys": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Revise and compact only: a key of `contract` or "
+                    "`design` you REMOVE on purpose, as `contract.<key>` or "
+                    "`design.<key>` (e.g. 'contract.design' for a design note that "
+                    "does not belong in the contract). A key you merely leave out "
+                    "comes back from the current spec; only a key named here is "
+                    "deleted. Say in `change_note` why it goes.",
+                },
                 "change_note": {"type": "string", "description": "Revise and compact only: "
                                 "which promise this revision changes, merges or drops, and "
                                 "why -- for the human who clears it. It is shown with the "
@@ -296,14 +306,31 @@ def _capability_lines(capabilities: list[dict] | None) -> str:
                      for c in capabilities or []) or "(none)"
 
 
-def _keep_omitted(revised, current) -> dict:
+def _keep_omitted(revised, current, removed=frozenset()) -> dict:
     """Omission is not deletion. A key the model left out of a revised mapping
     (the contract, the design) comes back from the current spec: revise promises
     to keep what the request does not touch, and a real revise dropped `purpose`
-    without being asked."""
+    without being asked. A key in `removed` -- named by P in `removed_keys` -- is
+    a deletion on purpose and stays out: without it no revise could delete a key,
+    and an unsupervised run spent six revisions on a design note P had nested in
+    a contract, then overwrote it, which made a HARD change of a tidy-up."""
     out = dict(revised) if isinstance(revised, dict) else {}
     for key, value in (current if isinstance(current, dict) else {}).items():
         out.setdefault(key, value)
+    for key in removed:
+        out.pop(key, None)
+    return out
+
+
+def _removed(data: dict) -> dict[str, set[str]]:
+    """P's `removed_keys`, by mapping: {"contract": {...}, "design": {...}}. Only
+    `contract.<key>` and `design.<key>` -- the two mappings whose omitted keys come
+    back; anything else named is ignored (the head fields have rules of their own)."""
+    out: dict[str, set[str]] = {"contract": set(), "design": set()}
+    for path in data.get("removed_keys") or []:
+        section, _, key = str(path).strip().partition(".")
+        if section in out and key and "." not in key:
+            out[section].add(key)
     return out
 
 
@@ -351,7 +378,9 @@ def revise_spec(
         "Apply ONLY the requested change. PRESERVE every field you are not explicitly "
         "changing -- code globs, depends_on, design.approach, design.verification, "
         "invariants, error_behavior, and acceptance_criteria must come back unchanged "
-        "unless the change requires touching them.\n\n"
+        "unless the change requires touching them. A key of `contract` or `design` you "
+        "leave out comes back; to DELETE one, name it in `removed_keys` "
+        "(`contract.<key>`, `design.<key>`).\n\n"
         f"CURRENT SPEC.md:\n{current_spec}\n\n"
         f"REQUESTED CHANGE:\n{instruction}\n\n"
         f"ANCESTOR CONTRACTS -- the Spine; the owning container's code layout is here "
@@ -397,12 +426,14 @@ def revise_spec(
     # the one a revise may legitimately empty, so an explicit [] stands there.
     given = data.get("depends_on")
     code = _clean_code(data.get("code"), kind)
+    removed = _removed(data)
     head_meta = {
         "id": node_id,
         "parent": parent_id,
         "kind": kind,
-        "contract": _keep_omitted(data.get("contract"), fm.get("contract")),
-        "design": _keep_omitted(data.get("design"), fm.get("design")),
+        "contract": _keep_omitted(data.get("contract"), fm.get("contract"),
+                                  removed["contract"]),
+        "design": _keep_omitted(data.get("design"), fm.get("design"), removed["design"]),
         "depends_on": _clean_deps(given, node_id, parent_id) if given is not None
         else list(fm.get("depends_on") or []),
         "code": code or _clean_code(fm.get("code"), kind),
@@ -428,8 +459,8 @@ def revise_spec(
 def compact_spec(current_spec: str, architecture: str = "", spine: dict | None = None,
                  model: str | None = None) -> tuple[str, str]:
     """The same spec in fewer words: (spec, note). Every promise stays -- a contract
-    key P leaves out comes back, every `provides` name should survive (lost_promises
-    says which did not) -- while what is said twice, what ARCHITECTURE.md and the
+    key P leaves out comes back unless P names it in `removed_keys`, every `provides`
+    name should survive (lost_promises says which did not) -- while what is said twice, what ARCHITECTURE.md and the
     ancestors already say, verification that copies the criteria, notes about one
     machine and revision history in the prose go. id, parent, kind, status,
     depends_on, code, requests and waivers are copied, never P's to change here.
@@ -447,7 +478,9 @@ def compact_spec(current_spec: str, architecture: str = "", spine: dict | None =
         f"ARCHITECTURE.md (it reaches this node anyway):\n{architecture or '(none)'}\n\n"
         "KEEP every promise: every `provides` entry's NAME -- the thing a consumer calls "
         "or reads -- and every invariant, error and acceptance criterion that says "
-        "something of its own. Keep every contract key; shorten its list, never drop it. "
+        "something of its own. Keep every contract key; shorten its list, never drop it "
+        "-- except a key that does not belong where it is (a design note nested in the "
+        "contract): name it in `removed_keys` and keep what it says where it belongs. "
         "Shortening a promise is fine; changing what it promises is not.\n"
         "REMOVE: what is said twice (merge it into one entry); what ARCHITECTURE.md or "
         "the ancestors already say; design.verification lines that only restate an "
@@ -461,10 +494,12 @@ def compact_spec(current_spec: str, architecture: str = "", spine: dict | None =
     if not data:
         raise RuntimeError(_no_spec(finish))
     kind = fm.get("kind", "component")
+    removed = _removed(data)
     head_meta = {
         "id": node_id, "parent": fm.get("parent"), "kind": kind,
-        "contract": _keep_omitted(data.get("contract"), fm.get("contract")),
-        "design": _keep_omitted(data.get("design"), fm.get("design")),
+        "contract": _keep_omitted(data.get("contract"), fm.get("contract"),
+                                  removed["contract"]),
+        "design": _keep_omitted(data.get("design"), fm.get("design"), removed["design"]),
         "depends_on": list(fm.get("depends_on") or []),
         "code": list(fm.get("code") or []),
         "status": fm.get("status", "specd"),

@@ -2589,7 +2589,7 @@ class Cockpit(tk.Tk):
             said += f"\nWhy: {st['why']}"
         review = st.get("review") or []
         if review:
-            said += (f"\nUnsupervised, H' decided {len(review)} thing(s) in your place -- "
+            said += (f"\nH' decided {len(review)} thing(s) in your place -- "
                      "each waits in Requests for your review: accept to confirm, reject to "
                      "take it back.")
         self._set(self.guidance, f"Run {outcome.upper()}.\n{said}\n\n"

@@ -9,7 +9,8 @@ import pytest
 
 import orchestrate
 from agent import reviewer
-from engine import accepted, autonomy, decisions, inbox, iteration, parser, unsupervised
+from engine import (accepted, autonomy, decisions, inbox, iteration, lifecycle, parser,
+                    unsupervised)
 from tests.test_assist import _client_answering, _Resp
 
 _ARCH_REQ = ("- target: ARCHITECTURE.md\n  proposal: 'ADR: log output goes to stderr'\n"
@@ -347,6 +348,49 @@ def test_an_unsupervised_run_end_to_end_on_disk(graph_root):
             if c["node"] == accepted.ARCHITECTURE]
     assert arch, "the answer must wait for H as a pending change to ARCHITECTURE.md"
     assert events[-1]["review"] == ["rejected: util -> api: provides: + a health check"]
+
+
+def _session_deciding(root, *entries):
+    """A session in which the intent author has H' decide -- `cli.py decide`, under
+    the delegation -- which lands in the audit log, not in the stand-in's result."""
+    def start(argv, text, env, out, *, cwd):
+        for entry in entries:
+            lifecycle.log_autonomy(root, entry)
+        return _info()
+    return start
+
+
+_INSIDE = {"actor": "H'", "by": "m", "action": "accepted", "node": "util", "gate": "HARD"}
+
+
+def test_a_decision_h_prime_made_inside_the_round_reaches_the_closing_line(graph_root):
+    """The unsupervised guess run: H' accepted game.play's HARD change while the
+    session ran, and the closing line listed nothing for H to review."""
+    lifecycle.log_autonomy(graph_root, dict(_INSIDE, node="before-the-run"))
+    run = _Run(graph_root, [], [{"answered": [], "delegated": []}],
+               [{"gaps": [], "waiting": []}])
+    run.start = _session_deciding(graph_root, _INSIDE, {"actor": "E", "action": "cleared"})
+    assert run(max_rounds=1) == "done"
+    [end] = run.events("sge.run")
+    assert end["review"] == ["accepted under the delegation: util"]   # once; not the old one
+
+
+def test_a_supervised_run_names_it_too(graph_root):
+    run = _Run(graph_root, [], [], [{"gaps": [], "waiting": []}])
+    run.start = _session_deciding(graph_root, {
+        "actor": "H'", "by": "m", "action": "request-rejected", "node": "util",
+        "target": "api", "proposal": "provides: + a health check"})
+    run(max_rounds=1, unsupervised_=False)
+    [end] = run.events("sge.run")
+    assert "mode" not in end
+    assert end["review"] == ["rejected: util -> api: provides: + a health check"]
+
+
+def test_a_supervised_run_without_one_adds_no_review(graph_root):
+    run = _Run(graph_root, [_info()], [], [{"gaps": [], "waiting": []}])
+    run(max_rounds=1, unsupervised_=False)
+    [end] = run.events("sge.run")
+    assert "review" not in end
 
 
 # ---- one rule, stated everywhere it is stated ------------------------------------

@@ -203,6 +203,28 @@ def test_a_dependency_can_still_be_removed_on_purpose(monkeypatch):
     assert _revised(monkeypatch, depends_on=[])["depends_on"] == []
 
 
+def test_a_contract_or_design_key_is_deleted_when_p_names_it(monkeypatch):
+    """The unsupervised guess run: P had nested a design note in game.play's
+    contract, and no revise could take it out -- every omission came back."""
+    front = _revised(monkeypatch, removed_keys=["contract.purpose", "design.verification"])
+    assert "purpose" not in front["contract"]
+    assert front["design"] == {"approach": "argparse"}
+
+
+def test_a_named_key_goes_even_if_p_also_returned_it(monkeypatch):
+    front = _revised(monkeypatch, contract={"provides": ["main() -> int"], "purpose": "x"},
+                     removed_keys=["contract.purpose"])
+    assert "purpose" not in front["contract"]
+
+
+def test_removed_keys_reach_only_into_the_contract_and_the_design(monkeypatch):
+    front = _revised(monkeypatch, removed_keys=["code", "contract", "status.x",
+                                                "contract.purpose.deep", "design"])
+    assert front["contract"]["purpose"] == "the command"
+    assert front["design"] == {"approach": "argparse", "verification": ["runs headless"]}
+    assert front["code"] and front["status"] == "implemented"
+
+
 # ---- 5. asking for what is above the node (run 08) ------------------------------
 #
 # The greenfield run ended BLOCKED on this: the manual tells the intent author to
@@ -343,6 +365,20 @@ def test_compact_keeps_what_is_not_ps_to_change(monkeypatch):
     assert meta["contract"]["error_behavior"] == ["a bad level names it"]   # left out: back
     assert note == "merged the two invariants"
     assert planner.lost_promises(_LONG, spec) == []
+
+
+def test_compact_deletes_a_key_p_names(monkeypatch):
+    nested = _LONG.replace("contract:\n", "contract:\n  design: a loop over lines\n", 1)
+    assert frontmatter.loads(nested).metadata["contract"]["design"] == "a loop over lines"
+    answer = json.dumps({"contract": {"provides": ["log()", "flush()"]}, "body": "Logs.",
+                         "removed_keys": ["contract.design"],
+                         "change_note": "the design note left the contract"})
+    monkeypatch.setattr(planner, "_client", lambda *_: _client_answering(
+        _Resp(answer, "tool_calls")))
+    spec, _ = planner.compact_spec(nested)
+    contract = frontmatter.loads(spec).metadata["contract"]
+    assert "design" not in contract
+    assert contract["error_behavior"] == ["a bad level names it"]      # left out: back
 
 
 def test_lost_promises_names_a_provides_that_went_missing():

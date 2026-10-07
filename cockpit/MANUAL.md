@@ -464,7 +464,7 @@ loads it into the editor, **Save Arch** writes it.
 | **Requests (n)** | Everything waiting for *you*: decision requests, waivers, pending HARD changes. |
 | **Intent box** | What you want, in plain language with examples -- for Draft -- or the change you want -- for Revise. |
 | **Draft ⟶** | P writes a fresh `SPEC.md` for the target from the intent. The draft lands in the editor, not on disk. |
-| **Revise →** | P changes the target's *saved* spec as the Intent box asks, keeping everything it does not mention (and the status). P's note on what it changed and why appears above the change set. |
+| **Revise →** | P changes the target's *saved* spec as the Intent box asks, keeping everything it does not mention (and the status); a field you ask it to remove, it removes. P's note on what it changed and why appears above the change set. |
 | **Autonomy slider (D0 / D1 / D2)** | The draft gate: who clears a spec draft -- you alone, you with a second opinion from H', or, for a small (SOFT) change, H' itself. |
 | **Delegation** | Per project, off by default. On, H' may accept one narrow kind of HARD change in a *run*. |
 | **Guidance** | What just happened and what to do next. Every action writes here. |

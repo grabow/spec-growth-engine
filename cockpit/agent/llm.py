@@ -15,6 +15,12 @@ a choice.
   (e.g. low | medium | high), passed as it is written: to the chat call for P and
   H', to the harness for I and C. Unset, the provider's own default holds.
 
+  optional, P and H': SGE_<ROLE>_MAX_TOKENS -- the most one answer may take, its
+  reasoning included. Unset, the provider's default limit holds, and DeepSeek's
+  cut a goal check off at high reasoning (finish_reason=length; the run ended
+  unchecked). Not read for I and C: their harness sets its own, and the Codex
+  CLI has no such setting.
+
 Every role is set the same way, and only by its own settings: nothing falls
 back to another role, and nothing to a provider this code would have to know.
 Two roles on the same model repeat the same values -- which is what makes it
@@ -41,7 +47,7 @@ import openai
 ROLES = ("planner", "reviewer", "intent", "coder")
 AGENT_ROLES = ("intent", "coder")
 FIELDS = ("BASE_URL", "API_KEY", "MODEL")
-OPTIONAL = ("REASONING_EFFORT",)
+OPTIONAL = ("REASONING_EFFORT", "MAX_TOKENS")   # MAX_TOKENS: the chat roles only
 # harness -> the executable it needs on PATH
 HARNESSES = {"codex-cli": "codex"}
 
@@ -60,11 +66,21 @@ def _setting(role: str, field: str) -> str:
     return (os.environ.get(variable(role, field)) or "").strip()
 
 
+def _max_tokens(role: str) -> int | None:
+    """SGE_<ROLE>_MAX_TOKENS as a number; None when unset, not a whole number
+    above 0 (missing() says so), or the role is an agent (its harness decides)."""
+    value = _setting(role, "MAX_TOKENS")
+    if role in AGENT_ROLES or not value.isdigit() or int(value) <= 0:
+        return None
+    return int(value)
+
+
 def endpoint(role: str) -> dict:
-    """{base_url, api_key, model, harness, key_from} for a role, from its own
-    settings and nothing else (`harness` is '' for a chat role). `key_from`
-    names the variable the key came from ('' when there is none), never the
-    key -- it is safe to log."""
+    """{base_url, api_key, model, harness, reasoning_effort, max_tokens, key_from}
+    for a role, from its own settings and nothing else (`harness` is '' for a
+    chat role, `max_tokens` None for an agent). `key_from` names the variable
+    the key came from ('' when there is none), never the key -- it is safe to
+    log."""
     if role not in ROLES:
         raise ValueError(f"unknown role {role!r}; one of {ROLES}")
     key = _setting(role, "API_KEY")
@@ -72,6 +88,7 @@ def endpoint(role: str) -> dict:
             "model": _setting(role, "MODEL"),
             "harness": _setting(role, "HARNESS") if role in AGENT_ROLES else "",
             "reasoning_effort": _setting(role, "REASONING_EFFORT"),
+            "max_tokens": _max_tokens(role),
             "key_from": variable(role, "API_KEY") if key else ""}
 
 
@@ -93,15 +110,20 @@ def missing(role: str) -> list[str]:
         elif field == "HARNESS" and value not in HARNESSES:
             out.append(f"{variable(role, field)} is not a known harness "
                        f"({' | '.join(HARNESSES)})")
+    limit = _setting(role, "MAX_TOKENS")
+    if limit and role not in AGENT_ROLES and _max_tokens(role) is None:
+        out.append(f"{variable(role, 'MAX_TOKENS')} is not a whole number above 0")
     return out
 
 
 def describe(role: str) -> str:
     """'<model> @ <base_url>' -- for logs and run records, with the reasoning
-    effort when one is set. Never the key."""
+    effort and the output limit when they are set. Never the key."""
     ep = endpoint(role)
     effort = f", reasoning {ep['reasoning_effort']}" if ep["reasoning_effort"] else ""
-    return f"{ep['model'] or '(no model set)'} @ {ep['base_url'] or '(no URL set)'}{effort}"
+    limit = f", max {ep['max_tokens']} tokens" if ep["max_tokens"] else ""
+    return (f"{ep['model'] or '(no model set)'} @ {ep['base_url'] or '(no URL set)'}"
+            f"{effort}{limit}")
 
 
 def planner_model() -> str:
@@ -149,20 +171,24 @@ def _call_tool(client, tool: dict, prompt: str, *, model: str | None,
                role: str = "planner") -> tuple[dict, str | None]:
     """Make the model call `tool` once; return (its arguments, finish_reason).
 
-    No max_tokens, on purpose: GLM-5.2 reasons before it answers, the reasoning
-    counts against that limit, and how much it reasons varies from call to call.
-    A draft of cockpit/example took 3137 tokens, 2796 of them reasoning; the old
-    fixed 1500 cut every draft off. Without it OpenRouter allows the model's
-    own maximum. The arguments are {} for an answer without usable ones (see
-    _tool_args). Raises RuntimeError, with the reason, when the provider refuses
+    No fixed max_tokens, on purpose: GLM-5.2 reasons before it answers, the
+    reasoning counts against that limit, and how much it reasons varies from
+    call to call. A draft of cockpit/example took 3137 tokens, 2796 of them
+    reasoning; the old fixed 1500 cut every draft off. Without it OpenRouter
+    allows the model's own maximum -- but other providers have a default limit
+    of their own, and DeepSeek's cut a goal check off; the role's
+    SGE_<ROLE>_MAX_TOKENS, when set, is passed. The arguments are {} for an
+    answer without usable ones (see _tool_args). Raises RuntimeError, with the reason, when the provider refuses
     (bad key, rate limit, outage -- a bare openai.APIError escaped the cockpit's
     handlers as a traceback) or when the answer is cut off even so: that is a
     failure to report, never a silent empty answer."""
     kwargs = dict(model=model or planner_model(), tools=[tool],
                   messages=[{"role": "user", "content": prompt}])
-    effort = endpoint(role)["reasoning_effort"]      # the ROLE's, whichever model
-    if effort:
-        kwargs["reasoning_effort"] = effort
+    ep = endpoint(role)                              # the ROLE's, whichever model
+    if ep["reasoning_effort"]:
+        kwargs["reasoning_effort"] = ep["reasoning_effort"]
+    if ep["max_tokens"]:
+        kwargs["max_tokens"] = ep["max_tokens"]
     forced = {"type": "function", "function": {"name": tool["function"]["name"]}}
     try:
         resp = client.chat.completions.create(**kwargs, tool_choice=forced)
@@ -183,5 +209,6 @@ def _call_tool(client, tool: dict, prompt: str, *, model: str | None,
     if not data and finish == "length":
         raise RuntimeError("the answer was cut off at the model's output limit "
                            "(finish_reason=length; its reasoning counts against it). "
-                           "Try again.")
+                           f"Try again, or raise {variable(role, 'MAX_TOKENS')} in "
+                           "cockpit/.env.")
     return data, finish
