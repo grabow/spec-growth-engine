@@ -14,6 +14,15 @@ It is built for work in which language models write most of the specs and the
 code. Their judgement is used where it helps; the deterministic gate decides
 what gets through.
 
+## Papers
+
+- **The method** -- Hartwig Grabowski. *The Spec Growth Engine: Spec-Anchored,
+  Code-Coupled, Drift-Enforced Architecture for AI-Assisted Software
+  Development.* [arXiv:2606.27045](https://arxiv.org/abs/2606.27045), 2026.
+- **This implementation** -- Hartwig Grabowski. *Implementing the Spec Growth
+  Engine: Preventing Spec-Code Divergence, and Growing the Spec with Agents.*
+  [arXiv:2610.11725](https://arxiv.org/abs/2610.11725), 2026.
+
 ## Two layers
 
 ```text
