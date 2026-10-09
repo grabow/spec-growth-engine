@@ -161,9 +161,10 @@ is not yet, is in [`cockpit/STATUS.md`](cockpit/STATUS.md).
 
 A research prototype, in active development. The engine and the cockpit are
 covered by a test suite; the method was developed through a series of agent
-runs against small, concrete tasks. The unsupervised run mode is built and
-tested, but has not yet been used on a real task. Expect the interfaces to
-change.
+runs against small, concrete tasks. The unsupervised run mode has so far been
+used on one small task -- the number-guessing game in Section 4 of the
+implementation paper, given to a supervised and an unsupervised run -- and not
+yet on a larger one. Expect the interfaces to change.
 
 ## License and author
 
