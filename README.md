@@ -66,7 +66,8 @@ always runs and always blocks. See
 
 New to it? [`cockpit/MANUAL.md`](cockpit/MANUAL.md) walks through the cockpit step
 by step, with screenshots -- a small program built from nothing, every button
-explained.
+explained. To see an agent build something on its own, start with
+[the Pong quick start](cockpit/QUICKSTART.md).
 
 Requirements:
 
@@ -81,7 +82,8 @@ Requirements:
   [Models and keys](#models-and-keys).
 
 ```sh
-cd cockpit
+git clone https://github.com/grabow/spec-growth-engine.git
+cd spec-growth-engine/cockpit
 uv sync --group dev
 uv run python app.py                  # the cockpit, on the bundled example
 uv run pytest -q                      # the test suite
@@ -107,6 +109,24 @@ uv run python cli.py check ~/work/notes         # does it meet TASK.md? (H', no 
 ```
 
 The gate is offline and needs no key.
+
+## Quick start
+
+An agent builds a game on its own. The goal is a few lines -- *Pong in Python:
+one player against a bot*, with what it must do and what is out of scope; the
+run is unsupervised; about half an hour later the floor is green, the reviewer
+finds no gap, and the game starts from the command line:
+
+```sh
+uv run --project game pong
+```
+
+<img src="cockpit/docs/quickstart/07-pong.png" width="480" alt="Pong, built by one unsupervised run">
+
+In the cockpit that is three steps: **Open > New Project...** with the goal, the
+**Delegation** switch on, **Build > Start Run...** as *unsupervised*. Every step,
+with the screenshots of that run, the goal word for word, what the run built and
+the same on the command line: [`cockpit/QUICKSTART.md`](cockpit/QUICKSTART.md).
 
 ## Models and keys
 

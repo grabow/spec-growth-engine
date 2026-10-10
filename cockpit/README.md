@@ -55,7 +55,8 @@ command: `npm install -g @openai/codex`; a version that knows
 [Models, endpoints and keys](#models-endpoints-and-keys-cockpitenv).
 
 ```sh
-cd cockpit            # from the repository root
+git clone https://github.com/grabow/spec-growth-engine.git
+cd spec-growth-engine/cockpit
 uv sync --group dev   # --group dev installs pytest; without it the tests cannot run
 uv run python app.py            # uses ./example
 uv run python app.py /path/to/your/spec/root

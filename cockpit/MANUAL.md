@@ -11,6 +11,9 @@ models behind P, H' and C. Yours will word things differently -- a model never
 writes the same draft twice -- but the steps, the checks and the verdicts are
 the engine's, and they are the same for you.
 
+Here you build by hand, with help. To watch an agent build a program on its own
+-- one goal, one unsupervised run -- see [QUICKSTART.md](QUICKSTART.md).
+
 - [Before you start](#before-you-start)
 - [Part 1 -- The cockpit at a glance](#part-1----the-cockpit-at-a-glance)
 - [Part 2 -- Walkthrough: a number-guessing game](#part-2----walkthrough-a-number-guessing-game)
@@ -26,7 +29,8 @@ The models are configured in `cockpit/.env` -- copy `.env.example` (or
 explains every line. Then:
 
 ```sh
-cd cockpit
+git clone https://github.com/grabow/spec-growth-engine.git
+cd spec-growth-engine/cockpit
 uv sync --group dev
 uv run python app.py
 ```
